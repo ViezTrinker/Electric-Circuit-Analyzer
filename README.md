@@ -1,6 +1,6 @@
 # Electric Circuit Analyzer
 
-Desktop circuit analyzer for linear and nonlinear DC, AC sweeps, transient runs, and event-driven logic. The core library is in place and covered by tests. The schematic window is not built yet.
+Desktop circuit analyzer for linear and nonlinear DC, AC sweeps, transient runs, and event-driven logic. The window executable is `eca_analyzer`. It places parts on a grid, edits the main value of a selected part, and runs a DC operating point. The library behind that window is covered by tests.
 
 The program, its messages, and this documentation are in English.
 
@@ -19,20 +19,32 @@ A circuit that mixes analog parts and logic still solves the analog network. Log
 
 ## Build
 
-The library is C++20. The tested toolchain is Visual Studio 2026 (MSVC) with Ninja. Configure from the x64 developer environment so `cl` is on `PATH`.
+The library is C++20. The window needs Qt 6 Widgets. This tree is built with Visual Studio 2026 (MSVC) and the MSVC kit of Qt. On Windows, CMake uses the newest `msvc2022_64` kit under `C:\Qt` when `CMAKE_PREFIX_PATH` is not set. Pass that prefix when Qt is installed somewhere else. Do not link the MSVC kit with the MSYS2 g++.
+
+Visual Studio solution:
+
+```bat
+cmake -S . -B out\vs -G "Visual Studio 18 2026" -A x64 -DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/msvc2022_64
+```
+
+Open `out\vs\electric_circuit_analyzer.slnx`. Debug and Release are the configuration dropdown. Build the solution, then start `eca_analyzer`. The executable is `out\vs\Debug\eca_analyzer.exe` or `out\vs\Release\eca_analyzer.exe`. A post-build step copies the Qt runtime next to that executable.
+
+Command-line build from the x64 developer environment, with Ninja on `PATH`:
 
 ```bat
 call "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat"
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/msvc2022_64
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-`eca_core` is a static library with no Qt dependency. `eca_tests` links that library and runs the analog and digital checks. Ninja must be on `PATH` (for example the Ninja shipped with MSYS2). Do not link this tree with the MSYS2 g++ if you later add the MSVC build of Qt.
+`eca_core` is a static library with no Qt dependency. `eca_tests` links that library and runs the analog and digital checks. `eca_analyzer` links the library and Qt Widgets. `src/main.cpp` only starts the application and the main window.
 
 ## Layout
 
 ```text
+src/main.cpp    Starts the window
+src/ui          Schematic sheet, part palette, properties, DC results
 src/core        Circuit document, parts, nets, SI numbers, result codes
 src/solver      Dense MNA, device equations, DC / AC / transient
 src/digital     Event-driven logic kernel
@@ -41,7 +53,7 @@ third_party     nlohmann/json, reserved for the file format
 docs            Design notes for the library
 ```
 
-Headers use include guards, Doxygen on the public declarations, and the `Analyzer` namespace. `main` does not exist yet. When the window is added it should only start the application and the main window.
+Headers use include guards, Doxygen on the public declarations, and the `Analyzer` namespace.
 
 ## License
 
@@ -54,7 +66,8 @@ This project is licensed under the [MIT License](LICENSE). The vendored JSON hea
 
 ## Not in this tree yet
 
-- Schematic editor, property panel, and plots
+- Drawing wires, rotating parts, undo, and save/load from the window
+- Bode, transient, timing, and spectrum plots
 - Saving and loading `.eca.json` (the JSON header is vendored, the reader and writer are not)
 - Mixed-signal bridge: logic driving a resistor or LED, and analog voltages read by a gate, ADC, or 555
 - Small-signal parameters of diodes and transistors in an AC sweep

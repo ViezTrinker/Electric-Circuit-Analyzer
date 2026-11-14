@@ -1,6 +1,6 @@
 # Architecture
 
-The analyzer is a library first. A schematic is a `Circuit`. Analysis compiles that document into a `Netlist`, then solves the analog matrix, the logic event queue, or both.
+The analyzer is a library plus the window executable `eca_analyzer`. A schematic is a `Circuit`. Analysis compiles that document into a `Netlist`, then solves the analog matrix, the logic event queue, or both. The window in `src/ui` places parts, edits one numeric value, and calls `SolveDc`. Wire drawing, undo, plots, and file load stay outside that window for now.
 
 ```text
 Circuit
