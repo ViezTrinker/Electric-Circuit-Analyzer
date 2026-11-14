@@ -8,6 +8,7 @@
 #include "analog_solver.h"
 #include "core/netlist_builder.h"
 #include "digital/logic_kernel.h"
+#include "logic_bridge.h"
 
 namespace Analyzer
 {
@@ -34,18 +35,7 @@ DcResult SolveDc(const Circuit& circuit, CancelToken* pCancel)
    {
       return FailedDc(built, netlist.warnings);
    }
-   DcResult result = SolveDcAnalog(netlist, circuit.Settings(), pCancel);
-   if (IsErr(result.code))
-   {
-      return result;
-   }
-   Result digital = SolveDigitalDc(netlist, &result);
-   if (IsErr(digital))
-   {
-      result.code = digital;
-      result.message = Describe(digital);
-   }
-   return result;
+   return SolveOperatingPoint(netlist, circuit.Settings(), pCancel);
 }
 
 AcResult SolveAc(const Circuit& circuit, CancelToken* pCancel)
@@ -60,7 +50,27 @@ AcResult SolveAc(const Circuit& circuit, CancelToken* pCancel)
       result.warnings = netlist.warnings;
       return result;
    }
-   return SolveAcAnalog(netlist, circuit.Settings(), pCancel);
+   DcResult bias = SolveOperatingPoint(netlist, circuit.Settings(), pCancel);
+   if (IsErr(bias.code))
+   {
+      AcResult result = {};
+      result.code = bias.code;
+      result.message = bias.message;
+      result.warnings = bias.warnings;
+      result.bias = bias;
+      return result;
+   }
+   LogicDriveList drives;
+   Result collected = CollectOperatingDrives(netlist, bias.netLevel, &drives);
+   if (IsErr(collected))
+   {
+      AcResult result = {};
+      result.code = collected;
+      result.message = Describe(collected);
+      result.bias = bias;
+      return result;
+   }
+   return SolveAcAnalog(netlist, circuit.Settings(), pCancel, &drives, &bias);
 }
 
 TransientResult SolveTransient(const Circuit& circuit, CancelToken* pCancel)

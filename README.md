@@ -10,12 +10,12 @@ The program, its messages, and this documentation are in English.
 
 | Analysis | What it solves |
 | --- | --- |
-| DC | Modified nodal analysis. Resistors, sources, ideal meters, switches, diodes, LEDs, BJTs, and MOSFETs. Newton-Raphson for the nonlinear devices. |
-| AC | Small-signal sweep of linear R, L, and C around the DC operating point. |
-| Transient | Backward Euler or trapezoidal integration for linear R, L, and C, with DC, sine, and pulse sources. |
+| DC | Modified nodal analysis. Resistors, sources, ideal meters, switches, diodes, LEDs, BJTs, MOSFETs, and the 555 latch. Newton-Raphson for the nonlinear devices. |
+| AC | Small-signal sweep of linear R, L, and C around the DC operating point. The 555 latch stays at the DC state. |
+| Transient | Backward Euler or trapezoidal integration for linear R, L, and C, with DC, sine, and pulse sources. The 555 latch updates from the trigger and threshold. |
 | Logic | Gates, latches, flip-flops, clocks, counters, shift registers, decoders, and BCD-to-7-segment. A circuit with no analog parts runs as a pure event queue. |
 
-A circuit that mixes analog parts and logic still solves the analog network. Logic outputs are not yet stamped back into that network, and analog voltages are not yet read as logic inputs. See [docs/architecture.md](docs/architecture.md).
+A mixed DC operating point stamps each logic output that shares a net with an analog part as a voltage behind its output resistance, and reads analog voltages back through `Vil` and `Vih`. An AC sweep freezes that drive, so a gate has no small-signal gain. A mixed transient does not yet do this. See [docs/architecture.md](docs/architecture.md).
 
 ## Build
 

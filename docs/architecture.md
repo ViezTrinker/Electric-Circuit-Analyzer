@@ -15,7 +15,7 @@ BuildNetlist
         +--> SolveDigitalDc / SolveDigitalTransient
 ```
 
-`SolveDc` always runs the analog solver and then the digital DC settle. `SolveAc` runs the analog sweep only. `SolveTransient` uses the digital event queue when the netlist has no analog part. Otherwise it integrates the analog network and leaves logic levels at High-Z.
+`SolveDc` repeats the analog solve and the digital settle. A logic input on an analog net reads `Vil` and `Vih`. A logic output on an analog net is a voltage behind `outputResistanceOhm`. Pure digital nets stay out of the matrix. `SolveAc` freezes those drives: the sweep stamps the resistance and no small-signal path through the gate. `SolveTransient` still uses the digital event queue only when the netlist has no analog part. A mixed transient does not yet stop on digital events.
 
 ## Document
 

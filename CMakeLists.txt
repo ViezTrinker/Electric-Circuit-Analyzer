@@ -33,6 +33,9 @@ add_library(eca_core STATIC
    src/solver/dense_system.h
    src/solver/device_model.cpp
    src/solver/device_model.h
+   src/solver/logic_bridge.cpp
+   src/solver/logic_bridge.h
+   src/solver/logic_drive.h
    src/solver/simulator.cpp
    src/solver/simulator.h
 )
@@ -52,6 +55,8 @@ add_executable(eca_tests
    tests/test_main.cpp
    tests/test_analysis.cpp
    tests/test_digital.cpp
+   tests/test_mixed.cpp
+   tests/test_devices.cpp
 )
 
 target_link_libraries(eca_tests PRIVATE eca_core)

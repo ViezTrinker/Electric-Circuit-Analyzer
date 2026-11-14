@@ -612,6 +612,19 @@ std::string PinName(const Component& component, uint8_t pinIndex)
          if (pinIndex == 3) return "VCC";
          return "GND";
       }
+      case ComponentKind::Adc:
+      {
+         if (pinIndex == 0) return "VIN";
+         if (pinIndex == 1) return "VREF";
+         if (pinIndex == 2) return "CLK";
+         return std::string("D") + std::to_string(pinIndex - 3);
+      }
+      case ComponentKind::Dac:
+      {
+         if (pinIndex < 4) return std::string("D") + std::to_string(pinIndex);
+         if (pinIndex == 4) return "VREF";
+         return "VOUT";
+      }
       case ComponentKind::SevenSegment:
       {
          if (pinIndex < 7)

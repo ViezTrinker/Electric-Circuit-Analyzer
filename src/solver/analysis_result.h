@@ -40,6 +40,7 @@ using NodeValueList = std::vector<NodeValue>;
 using BranchValueList = std::vector<BranchValue>;
 using VoltageList = std::vector<double>;
 using LogicLevelList = std::vector<LogicLevel>;
+using DeviceStateList = std::vector<uint8_t>;
 
 struct DcResult
 {
@@ -50,6 +51,7 @@ struct DcResult
    BranchValueList branches;
    VoltageList netVoltage;
    LogicLevelList netLevel;
+   DeviceStateList deviceState;
 };
 
 struct AcPoint

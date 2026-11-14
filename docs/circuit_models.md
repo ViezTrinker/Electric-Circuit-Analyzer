@@ -30,13 +30,19 @@ The MOSFET is Shichman-Hodges level 1 with the bulk tied to the source. Pins are
 | Voltmeter, pin 0 = plus, pin 1 = minus | No stamp. | Input resistance. Input capacitance is stored. |
 | SPST and pushbutton | Closed is a 0 V branch when the pins differ. Open stamps nothing. | Closed and open resistances. An open resistance of 0 is rejected. |
 
-`MeterMode` and `ResistanceMode` are enums, not booleans. The pushbutton contact is normally open or normally closed. The rest state is the DC state. The event list is applied only in transient. SPDT, DIP switches, the relay, the 555, the comparator, the 7-segment display, the ADC, and the DAC are in the part catalog. Their analog stamps are not implemented yet.
+`MeterMode` and `ResistanceMode` are enums, not booleans. The pushbutton contact is normally open or normally closed. The rest state is the DC state. The event list is applied only in transient. At DC the 7-segment display is one diode per segment, the comparator pulls its output to VCC or GND, the relay coil is a resistor and the contact follows pull-in and drop-out, the DAC output is `code / 15 * Vref`, and the ADC code is `floor(Vin / Vref * 16)` clamped to 0..15.
+
+An SPDT switch joins COM to throw A or throw B. The other throw uses the open resistance when that mode is resistive. A DIP switch is four independent SPST channels. A closed ideal contact is a 0 V branch.
+
+The 555 pins are VCC, GND, TRIG, THRES, DISCH, OUT, and RESET. OUT is a resistor of `outputResistanceOhm` to VCC when the latch is high and to GND when it is low. DISCH uses the same resistance to GND while the output is low, and is open while the output is high. RESET below 0.4 of the supply forces the output low. Otherwise a trigger below one third of the supply sets the latch, and a threshold above two thirds clears it. If both are quiet the latch holds. DC repeats that decision until the voltages and the latch agree. If they never agree, DC keeps the initial output-low state and solves that circuit. Small-signal AC freezes the DC latch. Transient applies the same decision after `propagationDelaySec`. The astable high time is about `0.693 (R1 + R2) C`. The low time uses the Thevenin resistance of R2, R1, and the discharge resistance.
 
 ## Logic levels
 
 A logic input stores nothing while the net is purely digital. High-Z on an input is Conflict, and the gate output becomes Conflict. The exception is a disabled tri-state output, which is High-Z, and an open-drain high, which is also High-Z.
 
 CMOS thresholds scale as 0.7 and 0.3 of the supply. TTL stays at Vol 0.2 V, Voh 3.4 V, Vil 0.8 V, and Vih 2.0 V until the family is Custom. The default family is CMOS 5 V. The default output resistance is 100 ohm, the delay is 10 ns, and the rise and fall times are 5 ns. Gate supply current is not modeled.
+
+On a mixed net the DC solver stamps a high output as `vohVolt` and a low output as `volVolt`, each behind `outputResistanceOhm`. High-Z and Conflict add no drive. An output resistance of 0 is stamped as 1 mΩ. The AC sweep keeps that resistance to ground and contributes no controlled source, so the gate does not amplify. Pull-up and pull-down parts on a mixed net are not yet resistors to the supply.
 
 | Kind | Pins, rotation 0 |
 | --- | --- |
@@ -61,7 +67,7 @@ Preset, clear, set, reset, and enable each have an active-high or active-low pol
 
 ## Defaults used by the tests
 
-These are the checks in `tests/test_analysis.cpp` and `tests/test_digital.cpp`.
+These are the checks in `tests/test_analysis.cpp`, `tests/test_digital.cpp`, and `tests/test_mixed.cpp`.
 
 - A 10 V source and two 1 kΩ resistors divide to 5 V and 5 mA.
 - A 1 mA source into the default diode develops 0.7 V.
@@ -74,3 +80,11 @@ These are the checks in `tests/test_analysis.cpp` and `tests/test_digital.cpp`.
 - A 1 kHz D flip-flop with D held high goes high one period plus 10 ns after `t = 0`.
 - The counter and the shift register advance once per rising edge.
 - BCD codes 0, 1, and 8 produce the usual glyphs. Code 10 is blank.
+- An inverter input tied to ground drives 5 V through 100 Ω into 1 kΩ, so the output node is 4.545 V. The same node has no AC gain.
+- A 5 V source, 220 Ω, and the default LED conduct. An ideal switch across the lower resistor of a divider shorts that node. A 100 Ω closed switch does not.
+- A common-cathode segment tied to 5 V draws current through its 330 Ω resistor.
+- A comparator with IN+ above IN- pulls the output toward VCC. A relay coil above pull-in closes the normally open contact.
+- DAC code 1 with a 15 V reference produces 1 V behind the output resistance. ADC code for 5 V on an 8 V reference is 10.
+- An SPDT throw and one closed DIP channel short the bottom of a divider. The other SPDT throw leaves that node at the source voltage.
+- A 555 with trigger and threshold at ground drives its output high. With both pins at the supply, the output stays low.
+- A 555 astable with 10 kΩ, 10 kΩ, and 100 nF has the documented charge and discharge period.

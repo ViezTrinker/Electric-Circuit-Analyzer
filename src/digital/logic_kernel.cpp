@@ -249,6 +249,7 @@ bool IsLogicKind(ComponentKind kind)
       case ComponentKind::PullUp:
       case ComponentKind::PullDown:
       case ComponentKind::LogicProbe:
+      case ComponentKind::Adc:
       {
          return true;
       }
@@ -359,6 +360,13 @@ PinSet InputPins(const NetlistDevice& device)
          AddPin(&set, 3);
          break;
       }
+      case ComponentKind::Adc:
+      {
+         AddPin(&set, 0);
+         AddPin(&set, 1);
+         AddPin(&set, 2);
+         break;
+      }
       default:
       {
          break;
@@ -451,6 +459,14 @@ PinSet OutputPins(const NetlistDevice& device)
       {
          AddPin(&set, 3);
          AddPin(&set, 4);
+         break;
+      }
+      case ComponentKind::Adc:
+      {
+         for (uint8_t pin = 3; pin < device.pinCount; pin += 1)
+         {
+            AddPin(&set, pin);
+         }
          break;
       }
       default:
@@ -602,7 +618,7 @@ int64_t NextClockEdge(const ClockProperties& clock, int64_t timePs)
 
 struct LogicSim
 {
-   const Netlist* pNetlist;
+   const Netlist* pNetlist = nullptr;
    std::vector<DeviceMemory> memory;
    std::vector<bool> isLogic;
    LogicLevelList levels;
@@ -611,6 +627,8 @@ struct LogicSim
    std::vector<std::string> timingNotes;
    Result code;
    int64_t stopPs;
+   HoldMask holdNet;
+   const VoltageList* pAnalogVoltage = nullptr;
 
    Result Bind(const Netlist* pBound);
    void Resolve(void);
@@ -642,6 +660,8 @@ Result LogicSim::Bind(const Netlist* pBound)
    memory.assign(pNetlist->devices.size(), DeviceMemory{});
    isLogic.assign(pNetlist->devices.size(), false);
    levels.assign(pNetlist->netCount, LogicLevel::HighZ);
+   holdNet.assign(pNetlist->netCount, 0);
+   pAnalogVoltage = nullptr;
    fanout.assign(pNetlist->netCount, {});
    for (size_t index = 0; index < pNetlist->devices.size(); index += 1)
    {
@@ -767,6 +787,10 @@ void LogicSim::Resolve(void)
    }
    for (size_t net = 0; net < levels.size(); net += 1)
    {
+      if (net < holdNet.size() && holdNet[net] != 0)
+      {
+         continue;
+      }
       const NetDrive& node = drive[net];
       if (node.strongHigh && node.strongLow)
       {
@@ -1267,6 +1291,52 @@ OutputPlan LogicSim::Compute(uint32_t deviceIndex, EvalMode mode, int64_t timePs
       }
       return plan;
    }
+   if (device.kind == ComponentKind::Adc)
+   {
+      constexpr double AdcFullScaleCount = 16.0;
+      constexpr uint8_t AdcCodeMaximum = 15;
+      constexpr uint8_t AdcOutputBase = 3;
+      double inputVolt = 0.0;
+      double referenceVolt = 0.0;
+      if (pAnalogVoltage != nullptr && device.pinCount > 1)
+      {
+         uint32_t inputNet = device.nets[0];
+         uint32_t referenceNet = device.nets[1];
+         if (inputNet < pAnalogVoltage->size())
+         {
+            inputVolt = (*pAnalogVoltage)[inputNet];
+         }
+         if (referenceNet < pAnalogVoltage->size())
+         {
+            referenceVolt = (*pAnalogVoltage)[referenceNet];
+         }
+      }
+      uint8_t convertedCode = 0;
+      if (referenceVolt > 0.0 && std::isfinite(inputVolt) && std::isfinite(referenceVolt))
+      {
+         double scaled = std::floor((inputVolt / referenceVolt) * AdcFullScaleCount);
+         if (scaled < 0.0)
+         {
+            scaled = 0.0;
+         }
+         if (scaled > static_cast<double>(AdcCodeMaximum))
+         {
+            scaled = static_cast<double>(AdcCodeMaximum);
+         }
+         convertedCode = static_cast<uint8_t>(scaled);
+      }
+      for (uint8_t bit = 0; bit < 4; bit += 1)
+      {
+         uint8_t pin = static_cast<uint8_t>(AdcOutputBase + bit);
+         if (pin >= device.pinCount)
+         {
+            break;
+         }
+         LogicLevel bitLevel = (convertedCode & static_cast<uint8_t>(1u << bit)) == 0 ? LogicLevel::Low : LogicLevel::High;
+         Drive(&plan, pin, bitLevel, stage);
+      }
+      return plan;
+   }
    return plan;
 }
 
@@ -1656,19 +1726,53 @@ Result LogicSim::Run(CancelToken* pCancel, TransientResult* pResult)
 
 } // namespace
 
+Result PrepareHeldSim(const Netlist& netlist, const LogicLevelList& seededLevels, const HoldMask& holdMask, const VoltageList* pAnalogVoltage, LogicSim* pSim)
+{
+   if (pSim == nullptr)
+   {
+      return Result::InvalidParameter;
+   }
+   Result bound = pSim->Bind(&netlist);
+   if (IsErr(bound))
+   {
+      return bound;
+   }
+   pSim->pAnalogVoltage = pAnalogVoltage;
+   pSim->holdNet = holdMask;
+   if (pSim->holdNet.size() < pSim->levels.size())
+   {
+      pSim->holdNet.resize(pSim->levels.size(), 0);
+   }
+   for (size_t net = 0; net < pSim->levels.size(); net += 1)
+   {
+      if (pSim->holdNet[net] == 0 || net >= seededLevels.size())
+      {
+         continue;
+      }
+      pSim->levels[net] = seededLevels[net];
+   }
+   return pSim->Settle();
+}
+
 Result SolveDigitalDc(const Netlist& netlist, DcResult* pResult)
+{
+   HoldMask emptyMask;
+   LogicLevelList emptyLevels;
+   return SolveDigitalDcHeld(netlist, emptyLevels, emptyMask, pResult);
+}
+
+Result SolveDigitalDcHeld(const Netlist& netlist, const LogicLevelList& seededLevels, const HoldMask& holdMask, DcResult* pResult, const VoltageList* pAnalogVoltage)
 {
    if (pResult == nullptr)
    {
       return Result::InvalidParameter;
    }
    LogicSim sim;
-   Result bound = sim.Bind(&netlist);
-   if (IsErr(bound))
+   Result settled = PrepareHeldSim(netlist, seededLevels, holdMask, pAnalogVoltage, &sim);
+   if (sim.pNetlist == nullptr)
    {
-      return bound;
+      return settled;
    }
-   Result settled = sim.Settle();
    sim.Publish(pResult);
    if (IsErr(settled))
    {
@@ -1677,6 +1781,18 @@ Result SolveDigitalDc(const Netlist& netlist, DcResult* pResult)
       return settled;
    }
    return Result::Ok;
+}
+
+Result ReadSettledLevels(const Netlist& netlist, const LogicLevelList& seededLevels, const HoldMask& holdMask, LogicLevelList* pLevels, const VoltageList* pAnalogVoltage)
+{
+   if (pLevels == nullptr)
+   {
+      return Result::InvalidParameter;
+   }
+   LogicSim sim;
+   Result settled = PrepareHeldSim(netlist, seededLevels, holdMask, pAnalogVoltage, &sim);
+   *pLevels = sim.levels;
+   return settled;
 }
 
 Result SolveDigitalTransient(const Netlist& netlist, const AnalysisSettings& settings, CancelToken* pCancel, TransientResult* pResult)

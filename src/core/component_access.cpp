@@ -247,6 +247,31 @@ Result ReadNumeric(const Component& component, NumericProperty property, double*
    {
       if (property == NumericProperty::ResistanceOhm) { *pValue = pPull->resistanceOhm; return Result::Ok; }
    }
+   if (const SpstProperties* pSwitch = std::get_if<SpstProperties>(&component.properties))
+   {
+      if (property == NumericProperty::ClosedResistanceOhm) { *pValue = pSwitch->closedResistanceOhm; return Result::Ok; }
+      if (property == NumericProperty::OpenResistanceOhm) { *pValue = pSwitch->openResistanceOhm; return Result::Ok; }
+   }
+   if (const PushbuttonProperties* pButton = std::get_if<PushbuttonProperties>(&component.properties))
+   {
+      if (property == NumericProperty::ClosedResistanceOhm) { *pValue = pButton->closedResistanceOhm; return Result::Ok; }
+      if (property == NumericProperty::OpenResistanceOhm) { *pValue = pButton->openResistanceOhm; return Result::Ok; }
+   }
+   if (const SpdtProperties* pSpdt = std::get_if<SpdtProperties>(&component.properties))
+   {
+      if (property == NumericProperty::ClosedResistanceOhm) { *pValue = pSpdt->closedResistanceOhm; return Result::Ok; }
+      if (property == NumericProperty::OpenResistanceOhm) { *pValue = pSpdt->openResistanceOhm; return Result::Ok; }
+   }
+   if (const DipSwitchProperties* pDip = std::get_if<DipSwitchProperties>(&component.properties))
+   {
+      if (property == NumericProperty::ClosedResistanceOhm) { *pValue = pDip->closedResistanceOhm; return Result::Ok; }
+      if (property == NumericProperty::OpenResistanceOhm) { *pValue = pDip->openResistanceOhm; return Result::Ok; }
+   }
+   if (const Timer555Properties* pTimer = std::get_if<Timer555Properties>(&component.properties))
+   {
+      if (property == NumericProperty::OutputResistanceOhm) { *pValue = pTimer->outputResistanceOhm; return Result::Ok; }
+      if (property == NumericProperty::PropagationDelaySec) { *pValue = pTimer->propagationDelaySec; return Result::Ok; }
+   }
    if (const CounterProperties* pCounter = std::get_if<CounterProperties>(&component.properties))
    {
       if (property == NumericProperty::InitialValue) { *pValue = pCounter->initialValue; return Result::Ok; }
@@ -469,6 +494,31 @@ Result WriteNumeric(Component* pComponent, NumericProperty property, double valu
    {
       if (property == NumericProperty::ResistanceOhm) { if (IsErr(RequirePositive(value))) return Result::InvalidParameter; pPull->resistanceOhm = value; return Result::Ok; }
    }
+   if (SpstProperties* pSwitch = std::get_if<SpstProperties>(&pComponent->properties))
+   {
+      if (property == NumericProperty::ClosedResistanceOhm) { if (IsErr(RequirePositive(value))) return Result::InvalidParameter; pSwitch->closedResistanceOhm = value; return Result::Ok; }
+      if (property == NumericProperty::OpenResistanceOhm) { if (IsErr(RequirePositive(value))) return Result::InvalidParameter; pSwitch->openResistanceOhm = value; return Result::Ok; }
+   }
+   if (PushbuttonProperties* pButton = std::get_if<PushbuttonProperties>(&pComponent->properties))
+   {
+      if (property == NumericProperty::ClosedResistanceOhm) { if (IsErr(RequirePositive(value))) return Result::InvalidParameter; pButton->closedResistanceOhm = value; return Result::Ok; }
+      if (property == NumericProperty::OpenResistanceOhm) { if (IsErr(RequirePositive(value))) return Result::InvalidParameter; pButton->openResistanceOhm = value; return Result::Ok; }
+   }
+   if (SpdtProperties* pSpdt = std::get_if<SpdtProperties>(&pComponent->properties))
+   {
+      if (property == NumericProperty::ClosedResistanceOhm) { if (IsErr(RequirePositive(value))) return Result::InvalidParameter; pSpdt->closedResistanceOhm = value; return Result::Ok; }
+      if (property == NumericProperty::OpenResistanceOhm) { if (IsErr(RequirePositive(value))) return Result::InvalidParameter; pSpdt->openResistanceOhm = value; return Result::Ok; }
+   }
+   if (DipSwitchProperties* pDip = std::get_if<DipSwitchProperties>(&pComponent->properties))
+   {
+      if (property == NumericProperty::ClosedResistanceOhm) { if (IsErr(RequirePositive(value))) return Result::InvalidParameter; pDip->closedResistanceOhm = value; return Result::Ok; }
+      if (property == NumericProperty::OpenResistanceOhm) { if (IsErr(RequirePositive(value))) return Result::InvalidParameter; pDip->openResistanceOhm = value; return Result::Ok; }
+   }
+   if (Timer555Properties* pTimer = std::get_if<Timer555Properties>(&pComponent->properties))
+   {
+      if (property == NumericProperty::OutputResistanceOhm) { if (IsErr(RequirePositive(value))) return Result::InvalidParameter; pTimer->outputResistanceOhm = value; return Result::Ok; }
+      if (property == NumericProperty::PropagationDelaySec) { if (IsErr(RequireNonNegative(value))) return Result::InvalidParameter; pTimer->propagationDelaySec = value; return Result::Ok; }
+   }
    if (CounterProperties* pCounter = std::get_if<CounterProperties>(&pComponent->properties))
    {
       if (property == NumericProperty::InitialValue)
@@ -648,6 +698,17 @@ Result ReadEnumCode(const Component& component, EnumProperty property, int32_t* 
       if (property == EnumProperty::ClosedMode) { *pCode = static_cast<int32_t>(pSwitch->closedMode); return Result::Ok; }
       if (property == EnumProperty::OpenMode) { *pCode = static_cast<int32_t>(pSwitch->openMode); return Result::Ok; }
    }
+   if (const SpdtProperties* pSpdt = std::get_if<SpdtProperties>(&component.properties))
+   {
+      if (property == EnumProperty::RestThrow) { *pCode = static_cast<int32_t>(pSpdt->restPosition); return Result::Ok; }
+      if (property == EnumProperty::ClosedMode) { *pCode = static_cast<int32_t>(pSpdt->closedMode); return Result::Ok; }
+      if (property == EnumProperty::OpenMode) { *pCode = static_cast<int32_t>(pSpdt->openMode); return Result::Ok; }
+   }
+   if (const DipSwitchProperties* pDip = std::get_if<DipSwitchProperties>(&component.properties))
+   {
+      if (property == EnumProperty::ClosedMode) { *pCode = static_cast<int32_t>(pDip->closedMode); return Result::Ok; }
+      if (property == EnumProperty::OpenMode) { *pCode = static_cast<int32_t>(pDip->openMode); return Result::Ok; }
+   }
    if (const ClockProperties* pClock = std::get_if<ClockProperties>(&component.properties))
    {
       if (property == EnumProperty::StartLevel) { *pCode = static_cast<int32_t>(pClock->startLevel); return Result::Ok; }
@@ -727,6 +788,17 @@ Result WriteEnumCode(Component* pComponent, EnumProperty property, int32_t code)
       if (property == EnumProperty::RestState) { pSwitch->restState = static_cast<SwitchState>(code); return Result::Ok; }
       if (property == EnumProperty::ClosedMode) { pSwitch->closedMode = static_cast<ResistanceMode>(code); return Result::Ok; }
       if (property == EnumProperty::OpenMode) { pSwitch->openMode = static_cast<ResistanceMode>(code); return Result::Ok; }
+   }
+   if (SpdtProperties* pSpdt = std::get_if<SpdtProperties>(&pComponent->properties))
+   {
+      if (property == EnumProperty::RestThrow) { pSpdt->restPosition = static_cast<ThrowPosition>(code); return Result::Ok; }
+      if (property == EnumProperty::ClosedMode) { pSpdt->closedMode = static_cast<ResistanceMode>(code); return Result::Ok; }
+      if (property == EnumProperty::OpenMode) { pSpdt->openMode = static_cast<ResistanceMode>(code); return Result::Ok; }
+   }
+   if (DipSwitchProperties* pDip = std::get_if<DipSwitchProperties>(&pComponent->properties))
+   {
+      if (property == EnumProperty::ClosedMode) { pDip->closedMode = static_cast<ResistanceMode>(code); return Result::Ok; }
+      if (property == EnumProperty::OpenMode) { pDip->openMode = static_cast<ResistanceMode>(code); return Result::Ok; }
    }
    if (ClockProperties* pClock = std::get_if<ClockProperties>(&pComponent->properties))
    {

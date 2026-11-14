@@ -14,7 +14,7 @@ namespace Analyzer
 namespace
 {
 
-constexpr double MaximumExponent = 60.0;
+constexpr double MaximumExponent = 140.0;
 constexpr double SmoothWindowVolt = 0.001;
 
 double SafeExp(double argument)

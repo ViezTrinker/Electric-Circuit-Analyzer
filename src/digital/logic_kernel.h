@@ -6,6 +6,8 @@
 #ifndef LOGIC_KERNEL_H
 #define LOGIC_KERNEL_H
 
+#include <vector>
+
 #include "core/analysis_settings.h"
 #include "core/cancel_token.h"
 #include "core/netlist.h"
@@ -13,6 +15,8 @@
 
 namespace Analyzer
 {
+
+using HoldMask = std::vector<uint8_t>;
 
 /*!
  * \brief Settles combinational logic and sequential initial state.
@@ -26,6 +30,29 @@ namespace Analyzer
  * stored in the result are left in place.
  */
 Result SolveDigitalDc(const Netlist& netlist, DcResult* pResult);
+
+/*!
+ * \brief Settles logic while selected nets keep a seeded level.
+ *
+ * A held net is an analog net whose level comes from its voltage. Resolve
+ * does not replace that level with a digital driver.
+ *
+ * \param[in] netlist Compiled circuit.
+ * \param[in] seededLevels Level to keep on each held net.
+ * \param[in] holdMask Nonzero entries are held. Sized to the net count.
+ * \param[out] pResult DC result whose logic levels are filled.
+ */
+Result SolveDigitalDcHeld(const Netlist& netlist, const LogicLevelList& seededLevels, const HoldMask& holdMask, DcResult* pResult, const VoltageList* pAnalogVoltage = nullptr);
+
+/*!
+ * \brief Settles logic and returns the net levels without publishing branches.
+ *
+ * \param[in] netlist Compiled circuit.
+ * \param[in] seededLevels Level to keep on each held net.
+ * \param[in] holdMask Nonzero entries are held.
+ * \param[out] pLevels Settled level of every net.
+ */
+Result ReadSettledLevels(const Netlist& netlist, const LogicLevelList& seededLevels, const HoldMask& holdMask, LogicLevelList* pLevels, const VoltageList* pAnalogVoltage = nullptr);
 
 /*!
  * \brief Runs a pure logic transient from the settled operating point.
