@@ -226,6 +226,77 @@ void TestSwitchDivider(void)
    ExpectNear(NetVoltageOfPin(circuit, resistiveResult, top, 1), expectedMid, 1.0e-4, "resistive closed switch midpoint");
 }
 
+void TestSwitchOpens(void)
+{
+   constexpr double SupplyVolt = 10.0;
+   constexpr double DividerOhm = 1000.0;
+   constexpr double OpenAtSec = 0.001;
+   constexpr int32_t ClosedCode = 1;
+   Analyzer::Circuit circuit;
+   circuit.Settings().stopTimeSec = 0.002;
+   circuit.Settings().maximumStepSec = 0.001;
+   Place(&circuit, Analyzer::ComponentKind::Ground, 0, 0, 0);
+   uint64_t source = Place(&circuit, Analyzer::ComponentKind::VoltageSource, 0, 0, 90);
+   uint64_t top = Place(&circuit, Analyzer::ComponentKind::Resistor, 0, 2, 0);
+   Place(&circuit, Analyzer::ComponentKind::Resistor, 2, 2, 270);
+   uint64_t contact = Place(&circuit, Analyzer::ComponentKind::SpstSwitch, 2, 2, 270);
+   SetNumber(&circuit, source, Analyzer::NumericProperty::DcVoltageVolt, SupplyVolt);
+   SetNumber(&circuit, top, Analyzer::NumericProperty::ResistanceOhm, DividerOhm);
+   SetCode(&circuit, contact, Analyzer::EnumProperty::RestState, ClosedCode);
+   Analyzer::Component* pContact = circuit.FindComponent(contact);
+   Expect(pContact != nullptr, "switch component");
+   if (pContact != nullptr)
+   {
+      Analyzer::SpstProperties* pProperties = std::get_if<Analyzer::SpstProperties>(&pContact->properties);
+      Expect(pProperties != nullptr, "switch properties");
+      if (pProperties != nullptr)
+      {
+         Analyzer::SwitchEvent event = {};
+         event.timeSec = OpenAtSec;
+         event.state = Analyzer::SwitchState::Open;
+         pProperties->events.push_back(event);
+      }
+   }
+   Analyzer::Wire wire = {};
+   wire.points.push_back(Analyzer::GridPoint{2, 0});
+   wire.points.push_back(Analyzer::GridPoint{0, 0});
+   Expect(Analyzer::IsOk(circuit.AddWire(wire, nullptr)), "event return wire");
+   Analyzer::TransientResult result = Analyzer::SolveTransient(circuit, nullptr);
+   Expect(Analyzer::IsOk(result.code), result.message);
+   Analyzer::Netlist netlist;
+   Expect(Analyzer::IsOk(Analyzer::BuildNetlist(circuit, &netlist)), "event netlist");
+   uint32_t midpoint = 0;
+   for (const Analyzer::NetlistDevice& device : netlist.devices)
+   {
+      if (device.componentId == top && device.pinCount >= 2)
+      {
+         midpoint = device.nets[1];
+      }
+   }
+   double atStart = 0.0;
+   double afterOpen = 0.0;
+   bool sawOpen = false;
+   for (const Analyzer::TransientSample& sample : result.samples)
+   {
+      if (midpoint >= sample.netVoltage.size())
+      {
+         continue;
+      }
+      if (sample.timeSec <= 0.0)
+      {
+         atStart = sample.netVoltage[midpoint];
+      }
+      if (sample.timeSec + 1.0e-12 >= OpenAtSec)
+      {
+         afterOpen = sample.netVoltage[midpoint];
+         sawOpen = true;
+      }
+   }
+   ExpectNear(atStart, 0.0, 1.0e-3, "switch starts closed");
+   Expect(sawOpen, "switch event was sampled");
+   ExpectNear(afterOpen, SupplyVolt * 0.5, 1.0e-2, "switch opens on its event");
+}
+
 void TestClockLed(void)
 {
    constexpr double SeriesOhm = 220.0;
@@ -297,6 +368,7 @@ int RunMixedTests(void)
    TestInverterAcHasNoGain();
    TestLedConducts();
    TestSwitchDivider();
+   TestSwitchOpens();
    TestClockLed();
    return gFailures;
 }

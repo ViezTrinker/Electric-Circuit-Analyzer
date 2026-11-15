@@ -16,6 +16,7 @@ namespace
 
 constexpr double MaximumExponent = 140.0;
 constexpr double SmoothWindowVolt = 0.001;
+constexpr double ForwardCapacitanceFraction = 0.5;
 
 double SafeExp(double argument)
 {
@@ -31,6 +32,28 @@ double SafeExp(double argument)
 }
 
 } // namespace
+
+double JunctionCapacitance(double zeroBiasFarad, double potentialVolt, double gradingCoefficient, double junctionVoltageVolt)
+{
+   if (zeroBiasFarad <= 0.0 || potentialVolt <= 0.0 || gradingCoefficient <= 0.0 || std::isfinite(junctionVoltageVolt) == false)
+   {
+      return 0.0;
+   }
+   double barrierVolt = ForwardCapacitanceFraction * potentialVolt;
+   if (junctionVoltageVolt < barrierVolt)
+   {
+      double ratio = 1.0 - (junctionVoltageVolt / potentialVolt);
+      if (ratio <= 0.0)
+      {
+         ratio = 1.0 - ForwardCapacitanceFraction;
+      }
+      return zeroBiasFarad / std::pow(ratio, gradingCoefficient);
+   }
+   double remaining = 1.0 - ForwardCapacitanceFraction;
+   double continued = zeroBiasFarad / std::pow(remaining, gradingCoefficient);
+   double slope = gradingCoefficient / (potentialVolt * remaining);
+   return continued * (1.0 + (slope * (junctionVoltageVolt - barrierVolt)));
+}
 
 double LimitJunctionStep(double proposedVolt, double previousVolt, double thermalVolt)
 {

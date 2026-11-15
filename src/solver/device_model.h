@@ -74,6 +74,20 @@ MosfetLinearization EvaluateMosfet(ComponentKind channelKind, const MosfetProper
  */
 double LimitJunctionStep(double proposedVolt, double previousVolt, double thermalVolt);
 
+/*!
+ * \brief Junction capacitance at one bias, with the SPICE forward continuation.
+ *
+ * Below half the built-in potential the capacitance is Cj0 / (1 - V/Vj)^M.
+ * Above that point it follows the tangent so the value stays finite at Vj.
+ * A non-positive Cj0, Vj, or grading coefficient returns 0.
+ *
+ * \param[in] zeroBiasFarad Capacitance at zero bias.
+ * \param[in] potentialVolt Built-in potential.
+ * \param[in] gradingCoefficient Grading coefficient.
+ * \param[in] junctionVoltageVolt Anode side minus cathode side.
+ */
+double JunctionCapacitance(double zeroBiasFarad, double potentialVolt, double gradingCoefficient, double junctionVoltageVolt);
+
 } // namespace Analyzer
 
 #endif // DEVICE_MODEL_H

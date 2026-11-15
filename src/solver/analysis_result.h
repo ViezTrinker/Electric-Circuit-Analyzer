@@ -50,6 +50,7 @@ struct DcResult
    NodeValueList nodes;
    BranchValueList branches;
    VoltageList netVoltage;
+   VoltageList operatingVoltage;
    LogicLevelList netLevel;
    DeviceStateList deviceState;
 };

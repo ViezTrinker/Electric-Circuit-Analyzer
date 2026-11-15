@@ -69,6 +69,5 @@ This project is licensed under the [MIT License](LICENSE). The vendored JSON hea
 
 - A full property panel
 - Pull-up and pull-down parts on a mixed analog net are not yet resistors to a supply
-- Small-signal parameters of diodes and transistors in an AC sweep
 - A full 74xx catalog, RAM, ROM, and FPGA fabrics
 - VHDL, Verilog, SPICE import, noise, op-amps, and transformers

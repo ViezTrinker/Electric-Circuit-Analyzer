@@ -16,11 +16,11 @@ Currents into a device are positive unless a section below says otherwise. Branc
 | Inductor | 0, 1 | Short at DC when series R is 0, otherwise a resistor. Backward Euler uses `h/L`. Trapezoidal currently stamps `2h/L`. |
 | Ground | 1 | Net 0. |
 
-The diode knee is not a hard clamp. `forwardVoltageVolt` is the junction voltage at `forwardCurrentAmpere`, default 0.7 V at 1 mA. Saturation current follows from that point and the emission coefficient. Series resistance, when greater than zero, sits outside the junction on an internal node. Positive current is anode to cathode. The LED uses the same junction and adds a color for the schematic. Transient repeats that linearization at every accepted step. Junction capacitance and transit time are stored and are not stamped.
+The diode knee is not a hard clamp. `forwardVoltageVolt` is the junction voltage at `forwardCurrentAmpere`, default 0.7 V at 1 mA. Saturation current follows from that point and the emission coefficient. Series resistance, when greater than zero, sits outside the junction on an internal node. Positive current is anode to cathode. The LED uses the same junction and adds a color for the schematic. Transient repeats that conductance at every accepted step. The AC sweep stamps the same conductance plus junction and transit capacitance. Those capacitances are not in the transient stamp.
 
-The BJT is an Ebers-Moll transport model. Pins are collector, base, emitter. Currents are into the device. An Early voltage of 0 means infinite Early voltage. Junction capacitances and transit times default to 0 and are not part of the transient stamp. Newton limits each base junction step to two thermal voltages.
+The BJT is an Ebers-Moll transport model. Pins are collector, base, emitter. Currents are into the device. An Early voltage of 0 means infinite Early voltage. Junction capacitances and transit times default to 0. The AC sweep stamps them on top of the transconductances, using a built-in potential of 0.7 V and a grading coefficient of 0.5. They are not part of the transient stamp. Newton limits each base junction step to two thermal voltages.
 
-The MOSFET is Shichman-Hodges level 1 with the bulk tied to the source. Transient uses the same equations. Pins are drain, gate, source. `Id` is into the drain. PMOS uses the same equations on terminal voltages and threshold with the sign flipped, then flips `Id` back into the drain. The default test point `Vgs = 3 V`, `Vds = 5 V`, `Vto = 1 V`, `Kp = 2 mA/V²`, `W = L` gives `Id = 4 mA` when lambda is 0. The region boundary is smoothed over 1 mV. The exact saturation current away from that boundary is unchanged.
+The MOSFET is Shichman-Hodges level 1 with the bulk tied to the source. Transient uses the same equations. The AC sweep stamps `gm` and `gds`, and overlap capacitors `cgso * W` and `cgdo * W`. Pins are drain, gate, source. `Id` is into the drain. PMOS uses the same equations on terminal voltages and threshold with the sign flipped, then flips `Id` back into the drain. The default test point `Vgs = 3 V`, `Vds = 5 V`, `Vto = 1 V`, `Kp = 2 mA/V²`, `W = L` gives `Id = 4 mA` when lambda is 0. The region boundary is smoothed over 1 mV. The exact saturation current away from that boundary is unchanged.
 
 ## Meters and switches
 
@@ -73,7 +73,9 @@ These are the checks in `tests/test_analysis.cpp`, `tests/test_digital.cpp`, and
 - A 1 mA source into the default diode develops 0.7 V.
 - A 1 kΩ and 1 µF low-pass has gain `1/sqrt(2)` at `1/(2πRC)`.
 - The same RC, stepped to 1 V with trapezoidal steps of 10 µs, is near `1 - exp(-1)` at 1 ms.
-- The NMOS point above draws 4 mA from the drain supply.
+- The NMOS point above draws 4 mA from the drain supply. With the gate at 0 V that current is below 1 nA.
+- A 1 mA diode bias has the small-signal resistance `n Vt / I`. A 1 µF junction capacitance attenuates that voltage at 100 kHz.
+- An NPN biased at the 0.7 V knee into 1 kΩ has collector gain `gm Rc`. The same NMOS, with 1 kΩ in the drain and a 10 V supply, has gain `gm Rd`.
 - NAND and XOR match the binary truth table. A floating NAND input is Conflict. One input held low forces a NAND output high.
 - An open-drain high plus a pull-up is high. Two opposite push-pull outputs are Conflict.
 - An inverter with 10 ns delay follows a clock edge 10 ns later.
@@ -82,7 +84,7 @@ These are the checks in `tests/test_analysis.cpp`, `tests/test_digital.cpp`, and
 - BCD codes 0, 1, and 8 produce the usual glyphs. Code 10 is blank.
 - An inverter input tied to ground drives 5 V through 100 Ω into 1 kΩ, so the output node is 4.545 V. The same node has no AC gain.
 - A 1 kHz clock, 220 Ω, and an LED conduct only while the clock output is high. The transient step ends at each clock edge.
-- A 5 V source, 220 Ω, and the default LED conduct. An ideal switch across the lower resistor of a divider shorts that node. A 100 Ω closed switch does not.
+- A 5 V source, 220 Ω, and the default LED conduct. An ideal switch across the lower resistor of a divider shorts that node. A 100 Ω closed switch does not. A closed switch that opens at 1 ms releases that node in the transient.
 - A common-cathode segment tied to 5 V draws current through its 330 Ω resistor.
 - A comparator with IN+ above IN- pulls the output toward VCC. A relay coil above pull-in closes the normally open contact.
 - DAC code 1 with a 15 V reference produces 1 V behind the output resistance. ADC code for 5 V on an 8 V reference is 10.

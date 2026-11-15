@@ -305,7 +305,13 @@ bool PushbuttonClosedAt(const PushbuttonProperties& properties, double timeSec, 
    return pressed == false;
 }
 
-PreparedCircuit Prepare(const Netlist& netlist, bool directCurrent)
+enum class SwitchSchedule : int8_t
+{
+   OperatingPoint = 0,
+   Transient = 1
+};
+
+PreparedCircuit Prepare(const Netlist& netlist, bool directCurrent, SwitchSchedule schedule, double timeSec)
 {
    PreparedCircuit prepared = {};
    prepared.code = Result::Ok;
@@ -360,7 +366,19 @@ PreparedCircuit Prepare(const Netlist& netlist, bool directCurrent)
       else if (device.kind == ComponentKind::SpstSwitch)
       {
          const SpstProperties* pSwitch = std::get_if<SpstProperties>(&device.properties);
-         if (pSwitch != nullptr && SwitchClosedAt(*pSwitch, 0.0, false) && pSwitch->closedMode == ResistanceMode::Ideal)
+         bool atEvent = schedule == SwitchSchedule::Transient;
+         bool closed = pSwitch != nullptr && SwitchClosedAt(*pSwitch, atEvent ? timeSec : 0.0, atEvent);
+         if (closed && pSwitch->closedMode == ResistanceMode::Ideal)
+         {
+            idealShort = true;
+         }
+      }
+      else if (device.kind == ComponentKind::Pushbutton)
+      {
+         const PushbuttonProperties* pButton = std::get_if<PushbuttonProperties>(&device.properties);
+         bool atEvent = schedule == SwitchSchedule::Transient;
+         bool closed = pButton != nullptr && PushbuttonClosedAt(*pButton, atEvent ? timeSec : 0.0, atEvent);
+         if (closed && pButton->closedMode == ResistanceMode::Ideal)
          {
             idealShort = true;
          }
@@ -462,17 +480,19 @@ void StampGmin(DenseSystem<double>* pSystem, uint32_t totalNets, double gminSiem
    }
 }
 
-void AddGain(DenseSystem<double>* pSystem, uint32_t rowNet, uint32_t columnNet, double gain)
+template <typename ScalarType>
+void AddGain(DenseSystem<ScalarType>* pSystem, uint32_t rowNet, uint32_t columnNet, ScalarType gain)
 {
-   NodeRef<double> row = MapNode<double>(rowNet);
-   NodeRef<double> column = MapNode<double>(columnNet);
+   NodeRef<ScalarType> row = MapNode<ScalarType>(rowNet);
+   NodeRef<ScalarType> column = MapNode<ScalarType>(columnNet);
    if (row.mapped && column.mapped)
    {
       pSystem->Add(row.index, column.index, gain);
    }
 }
 
-void AddControlled(DenseSystem<double>* pSystem, uint32_t intoNet, uint32_t plusNet, uint32_t minusNet, double gain)
+template <typename ScalarType>
+void AddControlled(DenseSystem<ScalarType>* pSystem, uint32_t intoNet, uint32_t plusNet, uint32_t minusNet, ScalarType gain)
 {
    AddGain(pSystem, intoNet, plusNet, gain);
    AddGain(pSystem, intoNet, minusNet, -gain);
@@ -777,7 +797,7 @@ void LimitJunctionAlpha(const VoltageList& previous, const VoltageList& next, ui
    {
       return;
    }
-   double step = std::abs(VoltageBetween(next, anodeNet, cathodeNet) - VoltageBetween(previous, anodeNet, cathodeNet));
+   double step = VoltageBetween(next, anodeNet, cathodeNet) - VoltageBetween(previous, anodeNet, cathodeNet);
    double limit = JunctionStepFactor * thermalVolt;
    if (step > limit)
    {
@@ -996,7 +1016,7 @@ DcResult SolveDcAnalog(const Netlist& netlist, const AnalysisSettings& settings,
    {
       return result;
    }
-   PreparedCircuit prepared = Prepare(netlist, true);
+   PreparedCircuit prepared = Prepare(netlist, true, SwitchSchedule::OperatingPoint, 0.0);
    if (IsErr(prepared.code))
    {
       result.code = prepared.code;
@@ -1428,6 +1448,7 @@ DcResult SolveDcAnalog(const Netlist& netlist, const AnalysisSettings& settings,
       result.message = Describe(Result::NoConvergence);
       return result;
    }
+   result.operatingVoltage = voltage;
    result.netVoltage.assign(netlist.netCount, 0.0);
    for (uint32_t net = 0; net < netlist.netCount && net < voltage.size(); net += 1)
    {
@@ -1483,6 +1504,128 @@ DcResult SolveDcAnalog(const Netlist& netlist, const AnalysisSettings& settings,
    result.message = Describe(Result::Ok);
    return result;
 }
+
+namespace
+{
+
+double BiasAt(const DcResult& bias, uint32_t net)
+{
+   if (net < bias.operatingVoltage.size())
+   {
+      return bias.operatingVoltage[net];
+   }
+   if (net < bias.netVoltage.size())
+   {
+      return bias.netVoltage[net];
+   }
+   return 0.0;
+}
+
+const DiodeProperties* DiodeOf(const NetlistDevice& device, DiodeProperties* pCopy)
+{
+   if (device.kind == ComponentKind::Led)
+   {
+      const LedProperties* pLed = std::get_if<LedProperties>(&device.properties);
+      if (pLed == nullptr || pCopy == nullptr)
+      {
+         return nullptr;
+      }
+      *pCopy = pLed->diode;
+      return pCopy;
+   }
+   return std::get_if<DiodeProperties>(&device.properties);
+}
+
+Result StampAcSemiconductors(DenseSystem<ComplexValue>* pSystem, const Netlist& netlist, const PreparedCircuit& prepared, const DcResult& bias, double omega, double gminSiemens)
+{
+   if (pSystem == nullptr)
+   {
+      return Result::InvalidParameter;
+   }
+   ComplexValue imaginary(0.0, omega);
+   for (size_t index = 0; index < netlist.devices.size() && index < prepared.devices.size(); index += 1)
+   {
+      const NetlistDevice& device = netlist.devices[index];
+      const SolverDevice& slot = prepared.devices[index];
+      if (device.kind == ComponentKind::Diode || device.kind == ComponentKind::Led)
+      {
+         DiodeProperties copy = {};
+         const DiodeProperties* pDiode = DiodeOf(device, &copy);
+         if (pDiode == nullptr || device.pinCount < 2)
+         {
+            return Result::InvalidParameter;
+         }
+         uint32_t junction = slot.extra[0];
+         uint32_t cathode = device.nets[1];
+         if (pDiode->seriesResistanceOhm > 0.0)
+         {
+            StampConductance(pSystem, device.nets[0], junction, ComplexValue(1.0 / pDiode->seriesResistanceOhm, 0.0));
+         }
+         double junctionVoltage = BiasAt(bias, junction) - BiasAt(bias, cathode);
+         DiodeLinearization linear = EvaluateDiode(*pDiode, junctionVoltage);
+         double capacitance = JunctionCapacitance(pDiode->junctionCapacitanceFarad, pDiode->junctionPotentialVolt, pDiode->gradingCoefficient, junctionVoltage);
+         capacitance += pDiode->transitTimeSec * linear.conductanceSiemens;
+         ComplexValue admittance(linear.conductanceSiemens + gminSiemens, 0.0);
+         admittance += imaginary * capacitance;
+         StampConductance(pSystem, junction, cathode, admittance);
+      }
+      else if (device.kind == ComponentKind::Npn || device.kind == ComponentKind::Pnp)
+      {
+         const BjtProperties* pBjt = std::get_if<BjtProperties>(&device.properties);
+         if (pBjt == nullptr || device.pinCount < 3)
+         {
+            return Result::InvalidParameter;
+         }
+         double base = BiasAt(bias, device.nets[1]);
+         double collector = BiasAt(bias, device.nets[0]);
+         double emitter = BiasAt(bias, device.nets[2]);
+         double baseEmitter = base - emitter;
+         double baseCollector = base - collector;
+         BjtLinearization linear = EvaluateBjt(*pBjt, baseEmitter, baseCollector);
+         double emitterCapacitance = JunctionCapacitance(pBjt->cjeFarad, DefaultJunctionPotentialVolt, DefaultGradingCoefficient, baseEmitter);
+         emitterCapacitance += pBjt->forwardTransitTimeSec * linear.collectorEmitterTransconductance;
+         double collectorCapacitance = JunctionCapacitance(pBjt->cjcFarad, DefaultJunctionPotentialVolt, DefaultGradingCoefficient, baseCollector);
+         collectorCapacitance += pBjt->reverseTransitTimeSec * linear.baseCollectorConductance * pBjt->reverseBeta;
+         StampConductance(pSystem, device.nets[1], device.nets[2], ComplexValue(linear.baseEmitterConductance, 0.0) + (imaginary * emitterCapacitance));
+         StampConductance(pSystem, device.nets[1], device.nets[0], ComplexValue(linear.baseCollectorConductance, 0.0) + (imaginary * collectorCapacitance));
+         AddControlled(pSystem, device.nets[0], device.nets[1], device.nets[2], ComplexValue(linear.collectorEmitterTransconductance, 0.0));
+         AddControlled(pSystem, device.nets[0], device.nets[1], device.nets[0], ComplexValue(linear.collectorCollectorConductance, 0.0));
+         AddControlled(pSystem, device.nets[2], device.nets[1], device.nets[2], ComplexValue(-linear.collectorEmitterTransconductance, 0.0));
+         AddControlled(pSystem, device.nets[2], device.nets[1], device.nets[0], ComplexValue(-linear.collectorCollectorConductance, 0.0));
+      }
+      else if (device.kind == ComponentKind::Nmos || device.kind == ComponentKind::Pmos)
+      {
+         const MosfetProperties* pMosfet = std::get_if<MosfetProperties>(&device.properties);
+         if (pMosfet == nullptr || device.pinCount < 3)
+         {
+            return Result::InvalidParameter;
+         }
+         double gate = BiasAt(bias, device.nets[1]);
+         double drain = BiasAt(bias, device.nets[0]);
+         double source = BiasAt(bias, device.nets[2]);
+         MosfetLinearization linear = EvaluateMosfet(device.kind, *pMosfet, gate - source, drain - source);
+         AddGain(pSystem, device.nets[0], device.nets[1], ComplexValue(linear.gateSourceTransconductance, 0.0));
+         AddGain(pSystem, device.nets[0], device.nets[2], ComplexValue(-linear.gateSourceTransconductance - linear.drainSourceConductance, 0.0));
+         AddGain(pSystem, device.nets[0], device.nets[0], ComplexValue(linear.drainSourceConductance, 0.0));
+         AddGain(pSystem, device.nets[2], device.nets[1], ComplexValue(-linear.gateSourceTransconductance, 0.0));
+         AddGain(pSystem, device.nets[2], device.nets[2], ComplexValue(linear.gateSourceTransconductance + linear.drainSourceConductance, 0.0));
+         AddGain(pSystem, device.nets[2], device.nets[0], ComplexValue(-linear.drainSourceConductance, 0.0));
+         double gateSourceCapacitance = pMosfet->cgsoFaradPerMeter * pMosfet->channelWidthMeter;
+         double gateDrainCapacitance = pMosfet->cgdoFaradPerMeter * pMosfet->channelWidthMeter;
+         if (gateSourceCapacitance > 0.0)
+         {
+            StampConductance(pSystem, device.nets[1], device.nets[2], imaginary * gateSourceCapacitance);
+         }
+         if (gateDrainCapacitance > 0.0)
+         {
+            StampConductance(pSystem, device.nets[1], device.nets[0], imaginary * gateDrainCapacitance);
+         }
+      }
+   }
+   return Result::Ok;
+}
+
+} // namespace
 
 AcResult SolveAcAnalog(const Netlist& netlist, const AnalysisSettings& settings, CancelToken* pCancel, const LogicDriveList* pDrives, const DcResult* pBias)
 {
@@ -1546,7 +1689,7 @@ AcResult SolveAcAnalog(const Netlist& netlist, const AnalysisSettings& settings,
          frequencies.push_back(settings.sweepStartHz + (fraction * (settings.sweepStopHz - settings.sweepStartHz)));
       }
    }
-   PreparedCircuit prepared = Prepare(netlist, false);
+   PreparedCircuit prepared = Prepare(netlist, false, SwitchSchedule::OperatingPoint, 0.0);
    if (IsErr(prepared.code))
    {
       result.code = prepared.code;
@@ -1674,6 +1817,13 @@ AcResult SolveAcAnalog(const Netlist& netlist, const AnalysisSettings& settings,
                return result;
             }
          }
+      }
+      Result semiconductors = StampAcSemiconductors(&system, netlist, prepared, result.bias, omega, settings.gminSiemens);
+      if (IsErr(semiconductors))
+      {
+         result.code = semiconductors;
+         result.message = Describe(semiconductors);
+         return result;
       }
       if (pDrives != nullptr)
       {
@@ -2008,6 +2158,62 @@ Result StampTransientLinear(DenseSystem<double>* pSystem, const Netlist& netlist
             return stamped;
          }
       }
+      else if (device.kind == ComponentKind::SpstSwitch || device.kind == ComponentKind::Pushbutton)
+      {
+         bool closed = false;
+         ResistanceMode closedMode = ResistanceMode::Ideal;
+         ResistanceMode openMode = ResistanceMode::Ideal;
+         double closedResistance = 0.0;
+         double openResistance = 0.0;
+         double contactTime = timeSec + stepSec;
+         if (device.kind == ComponentKind::SpstSwitch)
+         {
+            const SpstProperties* pSwitch = std::get_if<SpstProperties>(&device.properties);
+            if (pSwitch == nullptr)
+            {
+               return Result::InvalidParameter;
+            }
+            closed = SwitchClosedAt(*pSwitch, contactTime, true);
+            closedMode = pSwitch->closedMode;
+            openMode = pSwitch->openMode;
+            closedResistance = pSwitch->closedResistanceOhm;
+            openResistance = pSwitch->openResistanceOhm;
+         }
+         else
+         {
+            const PushbuttonProperties* pButton = std::get_if<PushbuttonProperties>(&device.properties);
+            if (pButton == nullptr)
+            {
+               return Result::InvalidParameter;
+            }
+            closed = PushbuttonClosedAt(*pButton, contactTime, true);
+            closedMode = pButton->closedMode;
+            openMode = pButton->openMode;
+            closedResistance = pButton->closedResistanceOhm;
+            openResistance = pButton->openResistanceOhm;
+         }
+         if (closed && closedMode == ResistanceMode::Ideal && slot.branch != NoBranch)
+         {
+            uint32_t branchUnknown = (prepared.totalNets - 1) + slot.branch;
+            StampVoltageSource(pSystem, device.nets[0], device.nets[1], branchUnknown, 0.0);
+         }
+         else if (closed && closedMode == ResistanceMode::Resistive)
+         {
+            Result stamped = StampResistor(pSystem, device.nets[0], device.nets[1], closedResistance);
+            if (IsErr(stamped))
+            {
+               return stamped;
+            }
+         }
+         else if (closed == false && openMode == ResistanceMode::Resistive)
+         {
+            Result stamped = StampResistor(pSystem, device.nets[0], device.nets[1], openResistance);
+            if (IsErr(stamped))
+            {
+               return stamped;
+            }
+         }
+      }
       else if (device.kind == ComponentKind::Timer555)
       {
          uint8_t level = index < trialLevel.size() ? trialLevel[index] : TimerOutputLow;
@@ -2111,7 +2317,7 @@ TransientResult SolveTransientAnalog(const Netlist& netlist, const AnalysisSetti
       {
          stepSec = horizon - timeSec;
       }
-      PreparedCircuit prepared = Prepare(netlist, false);
+      PreparedCircuit prepared = Prepare(netlist, false, SwitchSchedule::Transient, timeSec + stepSec);
       if (IsErr(prepared.code))
       {
          result.code = prepared.code;

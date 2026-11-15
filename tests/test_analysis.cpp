@@ -255,6 +255,187 @@ void TestNmosSaturation(void)
    ExpectNear(BranchCurrent(result, drainDrive), 0.004, 1.0e-6, "nmos saturation current");
 }
 
+void TestNmosCutoff(void)
+{
+   Analyzer::Circuit circuit;
+   Place(&circuit, Analyzer::ComponentKind::Ground, 0, 2, 0);
+   uint64_t gateDrive = Place(&circuit, Analyzer::ComponentKind::VoltageSource, -2, 2, 270);
+   uint64_t drainDrive = Place(&circuit, Analyzer::ComponentKind::VoltageSource, 0, 0, 270);
+   uint64_t mosfet = Place(&circuit, Analyzer::ComponentKind::Nmos, 0, 0, 0);
+   Analyzer::Wire gateReturn = {};
+   gateReturn.points.push_back(Analyzer::GridPoint{-2, 2});
+   gateReturn.points.push_back(Analyzer::GridPoint{0, 2});
+   Analyzer::Wire drainReturn = {};
+   drainReturn.points.push_back(Analyzer::GridPoint{0, 0});
+   drainReturn.points.push_back(Analyzer::GridPoint{0, 2});
+   Expect(Analyzer::IsOk(circuit.AddWire(gateReturn, nullptr)), "cutoff gate return");
+   Expect(Analyzer::IsOk(circuit.AddWire(drainReturn, nullptr)), "cutoff drain return");
+   SetNumber(&circuit, gateDrive, Analyzer::NumericProperty::DcVoltageVolt, 0.0);
+   SetNumber(&circuit, drainDrive, Analyzer::NumericProperty::DcVoltageVolt, 5.0);
+   SetNumber(&circuit, mosfet, Analyzer::NumericProperty::ThresholdVoltageVolt, 1.0);
+   SetNumber(&circuit, mosfet, Analyzer::NumericProperty::Kp, 0.002);
+   SetNumber(&circuit, mosfet, Analyzer::NumericProperty::ChannelWidthMeter, 1.0);
+   SetNumber(&circuit, mosfet, Analyzer::NumericProperty::ChannelLengthMeter, 1.0);
+   Analyzer::DcResult result = Analyzer::SolveDc(circuit, nullptr);
+   Expect(Analyzer::IsOk(result.code), result.message);
+   Expect(std::abs(BranchCurrent(result, drainDrive)) < 1.0e-9, "nmos cutoff current");
+}
+
+void SetOneFrequency(Analyzer::Circuit* pCircuit, double frequencyHz)
+{
+   pCircuit->Settings().sweepStartHz = frequencyHz;
+   pCircuit->Settings().sweepStopHz = frequencyHz;
+}
+
+uint32_t PinNetOf(const Analyzer::Circuit& circuit, uint64_t componentId, uint8_t pinIndex)
+{
+   Analyzer::Netlist netlist;
+   if (Analyzer::IsErr(Analyzer::BuildNetlist(circuit, &netlist)))
+   {
+      return 0;
+   }
+   for (const Analyzer::NetlistDevice& device : netlist.devices)
+   {
+      if (device.componentId == componentId && pinIndex < device.pinCount)
+      {
+         return device.nets[pinIndex];
+      }
+   }
+   return 0;
+}
+
+double AcMagnitude(const Analyzer::AcResult& result, uint32_t net)
+{
+   if (result.points.empty() || net >= result.points.front().netVoltageReal.size() || net >= result.points.front().netVoltageImag.size())
+   {
+      return 0.0;
+   }
+   double real = result.points.front().netVoltageReal[net];
+   double imag = result.points.front().netVoltageImag[net];
+   return std::sqrt((real * real) + (imag * imag));
+}
+
+void TestDiodeSmallSignal(void)
+{
+   constexpr double BiasCurrentAmpere = 0.001;
+   constexpr double AcCurrentAmpere = 1.0e-6;
+   constexpr double ProbeFrequencyHz = 1.0;
+   constexpr double RollOffFrequencyHz = 1.0e5;
+   constexpr double JunctionFarad = 1.0e-6;
+   Analyzer::Circuit circuit;
+   Place(&circuit, Analyzer::ComponentKind::Ground, 0, 0, 0);
+   uint64_t source = Place(&circuit, Analyzer::ComponentKind::CurrentSource, 0, 0, 90);
+   uint64_t diode = Place(&circuit, Analyzer::ComponentKind::Diode, 0, 2, 270);
+   SetNumber(&circuit, source, Analyzer::NumericProperty::DcCurrentAmpere, BiasCurrentAmpere);
+   SetNumber(&circuit, source, Analyzer::NumericProperty::AcAmplitudeAmpere, AcCurrentAmpere);
+   SetNumber(&circuit, diode, Analyzer::NumericProperty::ForwardVoltageVolt, 0.7);
+   SetNumber(&circuit, diode, Analyzer::NumericProperty::ForwardCurrentAmpere, BiasCurrentAmpere);
+   SetOneFrequency(&circuit, ProbeFrequencyHz);
+   Analyzer::AcResult low = Analyzer::SolveAc(circuit, nullptr);
+   Expect(Analyzer::IsOk(low.code), low.message);
+   double junction = 0.0;
+   if (low.bias.netVoltage.empty() == false)
+   {
+      uint32_t anode = PinNetOf(circuit, diode, 0);
+      if (anode < low.bias.netVoltage.size())
+      {
+         junction = low.bias.netVoltage[anode];
+      }
+   }
+   double thermal = Analyzer::ThermalVoltage(Analyzer::DefaultTemperatureCelsius);
+   double saturation = Analyzer::SaturationCurrent(0.7, BiasCurrentAmpere, Analyzer::DefaultEmissionCoefficient, Analyzer::DefaultTemperatureCelsius);
+   double conductance = 0.0;
+   if (thermal > 0.0)
+   {
+      conductance = saturation * std::exp(junction / thermal) / thermal;
+   }
+   double expected = conductance > 0.0 ? AcCurrentAmpere / conductance : 0.0;
+   ExpectNear(AcMagnitude(low, PinNetOf(circuit, diode, 0)), expected, expected * 0.02, "diode dynamic resistance");
+
+   SetNumber(&circuit, diode, Analyzer::NumericProperty::JunctionCapacitanceFarad, JunctionFarad);
+   SetOneFrequency(&circuit, RollOffFrequencyHz);
+   Analyzer::AcResult high = Analyzer::SolveAc(circuit, nullptr);
+   Expect(Analyzer::IsOk(high.code), high.message);
+   Expect(AcMagnitude(high, PinNetOf(circuit, diode, 0)) < expected * 0.25, "diode capacitance rolls off");
+}
+
+void TestBjtGain(void)
+{
+   constexpr double BaseBiasVolt = 0.7;
+   constexpr double BaseAcVolt = 0.001;
+   constexpr double CollectorSupplyVolt = 5.0;
+   constexpr double CollectorOhm = 1000.0;
+   constexpr double ProbeFrequencyHz = 1.0;
+   Analyzer::Circuit circuit;
+   Place(&circuit, Analyzer::ComponentKind::Ground, 0, 0, 0);
+   Place(&circuit, Analyzer::ComponentKind::Ground, 4, 4, 0);
+   Place(&circuit, Analyzer::ComponentKind::Ground, 2, -2, 0);
+   uint64_t baseDrive = Place(&circuit, Analyzer::ComponentKind::VoltageSource, 0, 0, 90);
+   uint64_t collectorDrive = Place(&circuit, Analyzer::ComponentKind::VoltageSource, 2, -2, 90);
+   uint64_t resistor = Place(&circuit, Analyzer::ComponentKind::Resistor, 2, 0, 0);
+   uint64_t transistor = Place(&circuit, Analyzer::ComponentKind::Npn, 4, 2, 0);
+   Analyzer::Wire baseWire = {};
+   baseWire.points.push_back(Analyzer::GridPoint{0, 2});
+   baseWire.points.push_back(Analyzer::GridPoint{2, 2});
+   Expect(Analyzer::IsOk(circuit.AddWire(baseWire, nullptr)), "bjt base wire");
+   SetNumber(&circuit, baseDrive, Analyzer::NumericProperty::DcVoltageVolt, BaseBiasVolt);
+   SetNumber(&circuit, baseDrive, Analyzer::NumericProperty::AcAmplitudeVolt, BaseAcVolt);
+   SetNumber(&circuit, collectorDrive, Analyzer::NumericProperty::DcVoltageVolt, CollectorSupplyVolt);
+   SetNumber(&circuit, collectorDrive, Analyzer::NumericProperty::AcAmplitudeVolt, 0.0);
+   SetNumber(&circuit, resistor, Analyzer::NumericProperty::ResistanceOhm, CollectorOhm);
+   SetOneFrequency(&circuit, ProbeFrequencyHz);
+   Analyzer::AcResult result = Analyzer::SolveAc(circuit, nullptr);
+   Expect(Analyzer::IsOk(result.code), result.message);
+   uint32_t baseNet = PinNetOf(circuit, transistor, 1);
+   double baseVolt = baseNet < result.bias.netVoltage.size() ? result.bias.netVoltage[baseNet] : 0.0;
+   double thermal = Analyzer::ThermalVoltage(Analyzer::DefaultTemperatureCelsius);
+   double saturation = Analyzer::SaturationCurrent(Analyzer::DefaultForwardVoltageVolt, Analyzer::DefaultForwardCurrentAmpere, Analyzer::DefaultEmissionCoefficient, Analyzer::DefaultTemperatureCelsius);
+   double transconductance = 0.0;
+   if (thermal > 0.0)
+   {
+      transconductance = saturation * std::exp(baseVolt / thermal) / thermal;
+   }
+   double expected = transconductance * CollectorOhm * BaseAcVolt;
+   ExpectNear(AcMagnitude(result, PinNetOf(circuit, transistor, 0)), expected, expected * 0.05, "bjt collector gain");
+}
+
+void TestMosfetGain(void)
+{
+   constexpr double GateBiasVolt = 3.0;
+   constexpr double GateAcVolt = 0.001;
+   constexpr double DrainSupplyVolt = 10.0;
+   constexpr double DrainOhm = 1000.0;
+   constexpr double ThresholdVolt = 1.0;
+   constexpr double ProcessGain = 0.002;
+   constexpr double ProbeFrequencyHz = 1.0;
+   Analyzer::Circuit circuit;
+   Place(&circuit, Analyzer::ComponentKind::Ground, 0, 2, 0);
+   Place(&circuit, Analyzer::ComponentKind::Ground, 0, -6, 0);
+   uint64_t gateDrive = Place(&circuit, Analyzer::ComponentKind::VoltageSource, -2, 2, 270);
+   uint64_t drainDrive = Place(&circuit, Analyzer::ComponentKind::VoltageSource, 0, -6, 90);
+   uint64_t resistor = Place(&circuit, Analyzer::ComponentKind::Resistor, 0, -4, 90);
+   uint64_t mosfet = Place(&circuit, Analyzer::ComponentKind::Nmos, 0, 0, 0);
+   Analyzer::Wire gateReturn = {};
+   gateReturn.points.push_back(Analyzer::GridPoint{-2, 2});
+   gateReturn.points.push_back(Analyzer::GridPoint{0, 2});
+   Expect(Analyzer::IsOk(circuit.AddWire(gateReturn, nullptr)), "mosfet gate return");
+   SetNumber(&circuit, gateDrive, Analyzer::NumericProperty::DcVoltageVolt, GateBiasVolt);
+   SetNumber(&circuit, gateDrive, Analyzer::NumericProperty::AcAmplitudeVolt, GateAcVolt);
+   SetNumber(&circuit, drainDrive, Analyzer::NumericProperty::DcVoltageVolt, DrainSupplyVolt);
+   SetNumber(&circuit, drainDrive, Analyzer::NumericProperty::AcAmplitudeVolt, 0.0);
+   SetNumber(&circuit, resistor, Analyzer::NumericProperty::ResistanceOhm, DrainOhm);
+   SetNumber(&circuit, mosfet, Analyzer::NumericProperty::ThresholdVoltageVolt, ThresholdVolt);
+   SetNumber(&circuit, mosfet, Analyzer::NumericProperty::Kp, ProcessGain);
+   SetNumber(&circuit, mosfet, Analyzer::NumericProperty::ChannelWidthMeter, 1.0);
+   SetNumber(&circuit, mosfet, Analyzer::NumericProperty::ChannelLengthMeter, 1.0);
+   SetOneFrequency(&circuit, ProbeFrequencyHz);
+   Analyzer::AcResult result = Analyzer::SolveAc(circuit, nullptr);
+   Expect(Analyzer::IsOk(result.code), result.message);
+   double transconductance = ProcessGain * (GateBiasVolt - ThresholdVolt);
+   double expected = transconductance * DrainOhm * GateAcVolt;
+   ExpectNear(AcMagnitude(result, PinNetOf(circuit, mosfet, 0)), expected, expected * 0.02, "mosfet drain gain");
+}
+
 } // namespace
 
 int RunAnalysisTests(void)
@@ -265,5 +446,9 @@ int RunAnalysisTests(void)
    TestRcCutoff();
    TestRcStep();
    TestNmosSaturation();
+   TestNmosCutoff();
+   TestDiodeSmallSignal();
+   TestBjtGain();
+   TestMosfetGain();
    return gFailures;
 }

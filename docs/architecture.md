@@ -58,9 +58,9 @@ Unknowns are the voltage of every net except ground, then one current per voltag
 
 The voltage-source current is the current leaving the positive terminal into the rest of the circuit. The stamp puts `-1` on the plus-node row, `+1` on the minus-node row, and the constraint `Vplus - Vminus = V`.
 
-DC repeats that stamp inside Newton-Raphson, at most 80 times. A diode or LED step is limited to about two emission coefficients times the thermal voltage before it is accepted. Convergence requires a full step and a node change within `1e-6 + 1e-5`. A linear circuit finishes on the second iteration.
+DC repeats that stamp inside Newton-Raphson, at most 80 times. A forward diode, LED, or base-junction step is limited to about two emission coefficients times the thermal voltage before it is accepted. A reverse step is not limited. Convergence requires a full step and a node change within `1e-6 + 1e-5`. A linear circuit finishes on the second iteration.
 
-AC freezes the operating point and stamps capacitors as `jωC` and inductors as `1 / (R + jωL)`. A start frequency equal to the stop frequency is one point. Semiconductor capacitances are stored on the parts, but the sweep does not yet stamp their small-signal models.
+AC freezes the operating point and stamps capacitors as `jωC` and inductors as `1 / (R + jωL)`. A start frequency equal to the stop frequency is one point. A diode or LED adds its bias conductance, junction capacitance, and transit capacitance. A BJT adds the Ebers-Moll transconductances plus `Cje`, `Cjc`, and the transit capacitances. A MOSFET adds `gm`, `gds`, and the overlap capacitances `cgso*W` and `cgdo*W`. Junction capacitance below half the built-in potential is `Cj0 / (1 - V/Vj)^M`, and above that point it follows the tangent.
 
 Transient uses a fixed maximum step. Backward Euler is the default. Trapezoidal integration is optional. The step shrinks when the matrix is singular and grows by 1.2 after an accepted step. Capacitor and inductor history uses the companion model. Initial values come from the operating point, or from the component fields when `InitialConditionMode::ComponentValues` is selected.
 
