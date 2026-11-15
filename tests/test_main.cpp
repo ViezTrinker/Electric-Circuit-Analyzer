@@ -9,10 +9,12 @@ int RunAnalysisTests(void);
 int RunDigitalTests(void);
 int RunMixedTests(void);
 int RunDeviceTests(void);
+int RunFileTests(void);
+int RunExampleTests(void);
 
 int main(void)
 {
-   int failures = RunAnalysisTests() + RunDigitalTests() + RunMixedTests() + RunDeviceTests();
+   int failures = RunAnalysisTests() + RunDigitalTests() + RunMixedTests() + RunDeviceTests() + RunFileTests() + RunExampleTests();
    if (failures == 0)
    {
       std::cout << "All tests passed.\n";

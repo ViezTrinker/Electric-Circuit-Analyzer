@@ -503,38 +503,42 @@ void DrivePair(OutputPlan* pPlan, uint8_t outputPin, uint8_t complementPin, Logi
 
 LogicLevel CombineAnd(const LevelArray& input, uint8_t inputCount)
 {
-   for (uint8_t index = 0; index < inputCount; index += 1)
-   {
-      if (IsBinary(input[index]) == false)
-      {
-         return LogicLevel::Conflict;
-      }
-   }
+   bool unknown = false;
    for (uint8_t index = 0; index < inputCount; index += 1)
    {
       if (input[index] == LogicLevel::Low)
       {
          return LogicLevel::Low;
       }
+      if (IsBinary(input[index]) == false)
+      {
+         unknown = true;
+      }
+   }
+   if (unknown)
+   {
+      return LogicLevel::Conflict;
    }
    return LogicLevel::High;
 }
 
 LogicLevel CombineOr(const LevelArray& input, uint8_t inputCount)
 {
-   for (uint8_t index = 0; index < inputCount; index += 1)
-   {
-      if (IsBinary(input[index]) == false)
-      {
-         return LogicLevel::Conflict;
-      }
-   }
+   bool unknown = false;
    for (uint8_t index = 0; index < inputCount; index += 1)
    {
       if (input[index] == LogicLevel::High)
       {
          return LogicLevel::High;
       }
+      if (IsBinary(input[index]) == false)
+      {
+         unknown = true;
+      }
+   }
+   if (unknown)
+   {
+      return LogicLevel::Conflict;
    }
    return LogicLevel::Low;
 }
@@ -646,6 +650,7 @@ struct LogicSim
    void ScheduleClocks(void);
    void Publish(DcResult* pResult) const;
    Result Run(CancelToken* pCancel, TransientResult* pResult);
+   Result AdvanceTo(int64_t timePs, const LogicLevelList* pHeldLevels, CancelToken* pCancel);
 };
 
 Result LogicSim::Bind(const Netlist* pBound)
@@ -1609,6 +1614,135 @@ void LogicSim::Publish(DcResult* pResult) const
    }
 }
 
+Result LogicSim::AdvanceTo(int64_t timePs, const LogicLevelList* pHeldLevels, CancelToken* pCancel)
+{
+   while (events.empty() == false && code != Result::Oscillation)
+   {
+      if (pCancel != nullptr && pCancel->IsRequested())
+      {
+         code = Result::Error;
+         return code;
+      }
+      LogicEvent first = events.top();
+      if (first.timePs > timePs || first.timePs > stopPs)
+      {
+         break;
+      }
+      std::vector<LogicEvent> batch;
+      while (events.empty() == false)
+      {
+         LogicEvent next = events.top();
+         if (next.timePs != first.timePs || next.delta != first.delta)
+         {
+            break;
+         }
+         events.pop();
+         batch.push_back(next);
+      }
+      bool driveChanged = false;
+      for (const LogicEvent& event : batch)
+      {
+         if (event.deviceIndex >= memory.size() || event.pinIndex >= MaxPinCount)
+         {
+            continue;
+         }
+         DeviceMemory& slot = memory[event.deviceIndex];
+         if (event.generation < slot.validAfter[event.pinIndex])
+         {
+            continue;
+         }
+         slot.hasSchedule[event.pinIndex] = false;
+         if (slot.published[event.pinIndex] == event.level)
+         {
+            continue;
+         }
+         slot.published[event.pinIndex] = event.level;
+         driveChanged = true;
+      }
+      if (driveChanged == false)
+      {
+         continue;
+      }
+      LogicLevelList before = levels;
+      Resolve();
+      std::vector<bool> dirty(memory.size(), false);
+      for (size_t net = 0; net < levels.size(); net += 1)
+      {
+         if (levels[net] == before[net])
+         {
+            continue;
+         }
+         for (uint32_t listener : fanout[net])
+         {
+            if (listener < dirty.size())
+            {
+               dirty[listener] = true;
+            }
+         }
+      }
+      for (uint32_t index = 0; index < dirty.size(); index += 1)
+      {
+         if (dirty[index] == false)
+         {
+            continue;
+         }
+         OutputPlan plan = Compute(index, EvalMode::Event, first.timePs);
+         SchedulePlan(index, plan, first.timePs, first.delta);
+         if (code == Result::Oscillation)
+         {
+            return code;
+         }
+      }
+   }
+   if (pHeldLevels == nullptr)
+   {
+      return code;
+   }
+   std::vector<bool> dirty(memory.size(), false);
+   bool levelChanged = false;
+   for (size_t net = 0; net < levels.size(); net += 1)
+   {
+      if (net >= holdNet.size() || holdNet[net] == 0 || net >= pHeldLevels->size())
+      {
+         continue;
+      }
+      if (levels[net] == (*pHeldLevels)[net])
+      {
+         continue;
+      }
+      levels[net] = (*pHeldLevels)[net];
+      levelChanged = true;
+      if (net < fanout.size())
+      {
+         for (uint32_t listener : fanout[net])
+         {
+            if (listener < dirty.size())
+            {
+               dirty[listener] = true;
+            }
+         }
+      }
+   }
+   if (levelChanged == false)
+   {
+      return code;
+   }
+   for (uint32_t index = 0; index < dirty.size(); index += 1)
+   {
+      if (dirty[index] == false)
+      {
+         continue;
+      }
+      OutputPlan plan = Compute(index, EvalMode::Event, timePs);
+      SchedulePlan(index, plan, timePs, 0);
+      if (code == Result::Oscillation)
+      {
+         return code;
+      }
+   }
+   return code;
+}
+
 Result LogicSim::Run(CancelToken* pCancel, TransientResult* pResult)
 {
    TransientSample initial = {};
@@ -1839,6 +1973,93 @@ Result SolveDigitalTransient(const Netlist& netlist, const AnalysisSettings& set
    pResult->message = ran == Result::Error ? pResult->message : Describe(ran);
    pResult->warnings = pResult->initial.warnings;
    return ran;
+}
+
+struct LogicSession
+{
+   LogicSim sim;
+};
+
+Result OpenLogicSession(const Netlist& netlist, const AnalysisSettings& settings, const HoldMask& holdMask, const LogicLevelList& seededLevels, const VoltageList* pAnalogVoltage, LogicSession** pSession, LogicLevelList* pLevels)
+{
+   if (pSession == nullptr)
+   {
+      return Result::InvalidParameter;
+   }
+   *pSession = nullptr;
+   if (settings.stopTimeSec <= 0.0)
+   {
+      return Result::InvalidTimeStep;
+   }
+   LogicSession* pCreated = new LogicSession();
+   Result bound = pCreated->sim.Bind(&netlist);
+   if (IsErr(bound))
+   {
+      delete pCreated;
+      return bound;
+   }
+   pCreated->sim.stopPs = SecondsToPicoseconds(settings.stopTimeSec);
+   pCreated->sim.pAnalogVoltage = pAnalogVoltage;
+   pCreated->sim.holdNet = holdMask;
+   if (pCreated->sim.holdNet.size() < pCreated->sim.levels.size())
+   {
+      pCreated->sim.holdNet.resize(pCreated->sim.levels.size(), 0);
+   }
+   for (size_t net = 0; net < pCreated->sim.levels.size(); net += 1)
+   {
+      if (pCreated->sim.holdNet[net] == 0 || net >= seededLevels.size())
+      {
+         continue;
+      }
+      pCreated->sim.levels[net] = seededLevels[net];
+   }
+   Result settled = pCreated->sim.Settle();
+   pCreated->sim.ArmMemory();
+   pCreated->sim.ScheduleClocks();
+   if (pLevels != nullptr)
+   {
+      *pLevels = pCreated->sim.levels;
+   }
+   if (IsErr(settled))
+   {
+      delete pCreated;
+      return settled;
+   }
+   *pSession = pCreated;
+   return Result::Ok;
+}
+
+void CloseLogicSession(LogicSession* pSession)
+{
+   delete pSession;
+}
+
+int64_t NextLogicEventPicoseconds(const LogicSession* pSession)
+{
+   if (pSession == nullptr || pSession->sim.events.empty())
+   {
+      return -1;
+   }
+   LogicEvent next = pSession->sim.events.top();
+   if (next.timePs > pSession->sim.stopPs)
+   {
+      return -1;
+   }
+   return next.timePs;
+}
+
+Result AdvanceLogicSession(LogicSession* pSession, int64_t timePs, const LogicLevelList* pHeldLevels, CancelToken* pCancel, LogicLevelList* pLevels)
+{
+   if (pSession == nullptr)
+   {
+      return Result::InvalidParameter;
+   }
+   Result advanced = pSession->sim.AdvanceTo(timePs, pHeldLevels, pCancel);
+   if (pLevels != nullptr)
+   {
+      *pLevels = pSession->sim.levels;
+   }
+   return advanced;
 }
 
 } // namespace Analyzer

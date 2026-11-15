@@ -37,13 +37,36 @@ DcResult SolveDcAnalog(const Netlist& netlist, const AnalysisSettings& settings,
 AcResult SolveAcAnalog(const Netlist& netlist, const AnalysisSettings& settings, CancelToken* pCancel, const LogicDriveList* pDrives = nullptr, const DcResult* pBias = nullptr);
 
 /*!
+ * \brief Capacitor, inductor, and timer state carried from one transient slice to the next.
+ */
+struct TransientContinuity
+{
+   double timeSec;
+   double stepSec;
+   VoltageList voltage;
+   std::vector<double> inductorCurrent;
+   std::vector<uint8_t> timerLevel;
+   std::vector<double> timerChangeAt;
+   uint32_t acceptedSteps;
+   bool ready;
+};
+
+/*!
  * \brief Integrates the analog circuit in time.
+ *
+ * Each step Newton-linearizes diodes, BJTs, and MOSFETs. Junction capacitance
+ * is not stamped. A negative horizon uses the stop time in the settings. A ready continuity
+ * record continues a previous slice instead of solving a new operating point.
+ * Logic drives stay constant for the whole call.
  *
  * \param[in] netlist Compiled circuit.
  * \param[in] settings Transient settings.
  * \param[in] pCancel Optional cancel flag. May be null.
+ * \param[in] pDrives Optional logic Thevenin drives. May be null.
+ * \param[in] horizonSec Last time included in this slice. Negative means the settings stop time.
+ * \param[in,out] pContinuity Optional state carried across slices. May be null.
  */
-TransientResult SolveTransientAnalog(const Netlist& netlist, const AnalysisSettings& settings, CancelToken* pCancel);
+TransientResult SolveTransientAnalog(const Netlist& netlist, const AnalysisSettings& settings, CancelToken* pCancel, const LogicDriveList* pDrives = nullptr, double horizonSec = -1.0, TransientContinuity* pContinuity = nullptr);
 
 } // namespace Analyzer
 

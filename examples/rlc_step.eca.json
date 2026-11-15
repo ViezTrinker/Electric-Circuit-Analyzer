@@ -1,0 +1,104 @@
+{
+   "components": [
+      {
+         "id": 1,
+         "kind": "ground",
+         "name": "GND1",
+         "properties": {},
+         "rotation": 0,
+         "x": 0,
+         "y": 0
+      },
+      {
+         "id": 2,
+         "kind": "ground",
+         "name": "GND2",
+         "properties": {},
+         "rotation": 0,
+         "x": 4,
+         "y": 0
+      },
+      {
+         "id": 3,
+         "kind": "voltageSource",
+         "name": "V1",
+         "properties": {
+            "acAmplitudeVolt": 0.0,
+            "acPhaseDeg": 0.0,
+            "dcVoltageVolt": 0.0,
+            "pulseDelaySec": 0.0,
+            "pulseFallSec": 0.0,
+            "pulseInitial": 0.0,
+            "pulseLevel": 1.0,
+            "pulsePeriodSec": 0.04,
+            "pulseRiseSec": 0.0,
+            "pulseWidthSec": 0.02,
+            "sineAmplitude": 5.0,
+            "sineDelaySec": 0.0,
+            "sineFrequencyHz": 1000.0,
+            "sineOffset": 0.0,
+            "sinePhaseDeg": 0.0,
+            "transientWaveform": 2
+         },
+         "rotation": 90,
+         "x": 0,
+         "y": 0
+      },
+      {
+         "id": 4,
+         "kind": "resistor",
+         "name": "R1",
+         "properties": {
+            "resistanceOhm": 10.0
+         },
+         "rotation": 0,
+         "x": 0,
+         "y": 2
+      },
+      {
+         "id": 5,
+         "kind": "inductor",
+         "name": "L1",
+         "properties": {
+            "inductanceHenry": 0.01,
+            "initialCurrentAmpere": 0.0,
+            "seriesResistanceOhm": 0.0
+         },
+         "rotation": 0,
+         "x": 2,
+         "y": 2
+      },
+      {
+         "id": 6,
+         "kind": "capacitor",
+         "name": "C1",
+         "properties": {
+            "capacitanceFarad": 1e-06,
+            "esrOhm": 0.0,
+            "initialVoltageVolt": 0.0
+         },
+         "rotation": 270,
+         "x": 4,
+         "y": 2
+      }
+   ],
+   "format": "electric-circuit-analyzer",
+   "labels": [],
+   "name": "RLC step",
+   "settings": {
+      "gminSiemens": 1e-12,
+      "initialConditions": 0,
+      "integration": 0,
+      "kind": 2,
+      "linearPointCount": 50,
+      "maximumStepSec": 2e-05,
+      "pointsPerDecade": 20,
+      "stopTimeSec": 0.005,
+      "sweepScale": 0,
+      "sweepStartHz": 10.0,
+      "sweepStopHz": 1000000.0,
+      "updateDcOnEdit": 1
+   },
+   "version": 1,
+   "wires": []
+}

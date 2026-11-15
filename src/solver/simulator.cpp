@@ -96,6 +96,10 @@ TransientResult SolveTransient(const Circuit& circuit, CancelToken* pCancel)
       }
       return result;
    }
+   if (HasLogicDevice(netlist))
+   {
+      return SolveMixedTransient(netlist, circuit.Settings(), pCancel);
+   }
    return SolveTransientAnalog(netlist, circuit.Settings(), pCancel);
 }
 

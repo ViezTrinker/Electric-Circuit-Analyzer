@@ -23,7 +23,8 @@ namespace Analyzer
 enum class Placement : int8_t
 {
    Idle = 0,
-   Armed
+   Armed,
+   Wire
 };
 
 /*!
@@ -49,11 +50,20 @@ public:
    void ShowCircuit(const Circuit& circuit);
 
    /*!
-    * \brief Arms or cancels click-to-place.
+    * \brief Arms click-to-place or orthogonal wire drawing.
     *
-    * \param[in] placement Idle ignores empty clicks. Armed emits PlaceRequested.
+    * \param[in] placement Idle selects parts. Armed emits PlaceRequested. Wire emits WirePointRequested.
     */
    void SetPlacement(Placement placement);
+
+   /*!
+    * \brief Stores the wire that is still being drawn.
+    *
+    * The next ShowCircuit paints these points as a dashed preview.
+    *
+    * \param[in] points Grid points in click order.
+    */
+   void SetWirePreview(const GridPointList& points);
 
    /*!
     * \brief Id of the selected part, or 0.
@@ -79,6 +89,33 @@ signals:
     */
    void DeleteRequested(void);
 
+   /*!
+    * \brief The user clicked a grid point while drawing a wire.
+    *
+    * \param[in] positionX Grid column.
+    * \param[in] positionY Grid row.
+    */
+   void WirePointRequested(int positionX, int positionY);
+
+   /*!
+    * \brief The user pressed Enter to keep the wire being drawn.
+    */
+   void WireFinishRequested(void);
+
+   /*!
+    * \brief The user dropped a part on a new grid cell.
+    *
+    * \param[in] componentId Part that moved.
+    * \param[in] positionX New grid column.
+    * \param[in] positionY New grid row.
+    */
+   void ComponentMoved(qulonglong componentId, int positionX, int positionY);
+
+   /*!
+    * \brief The user pressed R to turn the selection clockwise.
+    */
+   void RotateRequested(void);
+
 protected:
    /*!
     * \brief Draws the grid.
@@ -96,11 +133,32 @@ protected:
    void mousePressEvent(QMouseEvent* pEvent) override;
 
    /*!
-    * \brief Handles Escape and Delete.
+    * \brief Handles Escape, Delete, rotate, and pan.
     *
     * \param[in] pEvent Key event.
     */
    void keyPressEvent(QKeyEvent* pEvent) override;
+
+   /*!
+    * \brief Ends temporary panning.
+    *
+    * \param[in] pEvent Key event.
+    */
+   void keyReleaseEvent(QKeyEvent* pEvent) override;
+
+   /*!
+    * \brief Drags a part or pans the sheet.
+    *
+    * \param[in] pEvent Mouse event.
+    */
+   void mouseMoveEvent(QMouseEvent* pEvent) override;
+
+   /*!
+    * \brief Commits a dragged part.
+    *
+    * \param[in] pEvent Mouse event.
+    */
+   void mouseReleaseEvent(QMouseEvent* pEvent) override;
 
    /*!
     * \brief Zooms the sheet with the mouse wheel.
@@ -110,8 +168,22 @@ protected:
    void wheelEvent(QWheelEvent* pEvent) override;
 
 private:
+   /*!
+    * \brief Component id stored on an item or one of its parents.
+    *
+    * \param[in] pItem Hit item. May be null.
+    */
+   uint64_t ComponentIdOf(QGraphicsItem* pItem) const;
+
    QGraphicsScene* _pScene;
    Placement _placement;
+   GridPointList _wirePreview;
+   QGraphicsItem* _pDragItem;
+   QPointF _dragAnchor;
+   QPointF _dragGrab;
+   QPoint _panStart;
+   bool _spaceDown;
+   bool _panning;
 };
 
 } // namespace Analyzer

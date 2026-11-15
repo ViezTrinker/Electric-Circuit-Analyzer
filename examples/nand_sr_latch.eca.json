@@ -1,0 +1,222 @@
+{
+   "components": [
+      {
+         "id": 1,
+         "kind": "nandGate",
+         "name": "U1",
+         "properties": {
+            "enablePolarity": 0,
+            "fallTimeSec": 5e-09,
+            "highThresholdVolt": 3.5,
+            "inputCount": 2.0,
+            "logicFamily": 1,
+            "lowThresholdVolt": 1.5,
+            "outputResistanceOhm": 100.0,
+            "outputStage": 0,
+            "propagationDelaySec": 1e-08,
+            "riseTimeSec": 5e-09,
+            "supplyVoltageVolt": 5.0,
+            "vihVolt": 3.5,
+            "vilVolt": 1.5,
+            "vohVolt": 5.0,
+            "volVolt": 0.0
+         },
+         "rotation": 0,
+         "x": 0,
+         "y": 0
+      },
+      {
+         "id": 2,
+         "kind": "nandGate",
+         "name": "U2",
+         "properties": {
+            "enablePolarity": 0,
+            "fallTimeSec": 5e-09,
+            "highThresholdVolt": 3.5,
+            "inputCount": 2.0,
+            "logicFamily": 1,
+            "lowThresholdVolt": 1.5,
+            "outputResistanceOhm": 100.0,
+            "outputStage": 0,
+            "propagationDelaySec": 1e-08,
+            "riseTimeSec": 5e-09,
+            "supplyVoltageVolt": 5.0,
+            "vihVolt": 3.5,
+            "vilVolt": 1.5,
+            "vohVolt": 5.0,
+            "volVolt": 0.0
+         },
+         "rotation": 0,
+         "x": 8,
+         "y": 4
+      },
+      {
+         "id": 3,
+         "kind": "pullDown",
+         "name": "PD1",
+         "properties": {
+            "enablePolarity": 0,
+            "fallTimeSec": 5e-09,
+            "highThresholdVolt": 3.5,
+            "logicFamily": 1,
+            "lowThresholdVolt": 1.5,
+            "outputResistanceOhm": 100.0,
+            "outputStage": 0,
+            "propagationDelaySec": 1e-08,
+            "resistanceOhm": 1000.0,
+            "riseTimeSec": 5e-09,
+            "supplyVoltageVolt": 5.0,
+            "vihVolt": 3.5,
+            "vilVolt": 1.5,
+            "vohVolt": 5.0,
+            "volVolt": 0.0
+         },
+         "rotation": 0,
+         "x": 0,
+         "y": 0
+      },
+      {
+         "id": 4,
+         "kind": "pullUp",
+         "name": "PU1",
+         "properties": {
+            "enablePolarity": 0,
+            "fallTimeSec": 5e-09,
+            "highThresholdVolt": 3.5,
+            "logicFamily": 1,
+            "lowThresholdVolt": 1.5,
+            "outputResistanceOhm": 100.0,
+            "outputStage": 0,
+            "propagationDelaySec": 1e-08,
+            "resistanceOhm": 1000.0,
+            "riseTimeSec": 5e-09,
+            "supplyVoltageVolt": 5.0,
+            "vihVolt": 3.5,
+            "vilVolt": 1.5,
+            "vohVolt": 5.0,
+            "volVolt": 0.0
+         },
+         "rotation": 0,
+         "x": 8,
+         "y": 4
+      }
+   ],
+   "format": "electric-circuit-analyzer",
+   "labels": [],
+   "name": "NAND SR latch",
+   "settings": {
+      "gminSiemens": 1e-12,
+      "initialConditions": 0,
+      "integration": 0,
+      "kind": 0,
+      "linearPointCount": 50,
+      "maximumStepSec": 1e-06,
+      "pointsPerDecade": 20,
+      "stopTimeSec": 0.001,
+      "sweepScale": 0,
+      "sweepStartHz": 10.0,
+      "sweepStopHz": 1000000.0,
+      "updateDcOnEdit": 1
+   },
+   "version": 1,
+   "wires": [
+      {
+         "id": 5,
+         "name": "",
+         "points": [
+            {
+               "x": 4,
+               "y": 0
+            },
+            {
+               "x": 4,
+               "y": -2
+            }
+         ]
+      },
+      {
+         "id": 6,
+         "name": "",
+         "points": [
+            {
+               "x": 4,
+               "y": -2
+            },
+            {
+               "x": 16,
+               "y": -2
+            }
+         ]
+      },
+      {
+         "id": 7,
+         "name": "",
+         "points": [
+            {
+               "x": 16,
+               "y": -2
+            },
+            {
+               "x": 16,
+               "y": 6
+            }
+         ]
+      },
+      {
+         "id": 8,
+         "name": "",
+         "points": [
+            {
+               "x": 16,
+               "y": 6
+            },
+            {
+               "x": 8,
+               "y": 6
+            }
+         ]
+      },
+      {
+         "id": 9,
+         "name": "",
+         "points": [
+            {
+               "x": 12,
+               "y": 4
+            },
+            {
+               "x": 14,
+               "y": 4
+            }
+         ]
+      },
+      {
+         "id": 10,
+         "name": "",
+         "points": [
+            {
+               "x": 14,
+               "y": 4
+            },
+            {
+               "x": 14,
+               "y": 2
+            }
+         ]
+      },
+      {
+         "id": 11,
+         "name": "",
+         "points": [
+            {
+               "x": 14,
+               "y": 2
+            },
+            {
+               "x": 0,
+               "y": 2
+            }
+         ]
+      }
+   ]
+}

@@ -1,0 +1,95 @@
+{
+   "components": [
+      {
+         "id": 1,
+         "kind": "ground",
+         "name": "GND1",
+         "properties": {},
+         "rotation": 0,
+         "x": 0,
+         "y": 0
+      },
+      {
+         "id": 2,
+         "kind": "voltageSource",
+         "name": "V1",
+         "properties": {
+            "acAmplitudeVolt": 0.0,
+            "acPhaseDeg": 0.0,
+            "dcVoltageVolt": 10.0,
+            "pulseDelaySec": 0.0,
+            "pulseFallSec": 1e-09,
+            "pulseInitial": 0.0,
+            "pulseLevel": 5.0,
+            "pulsePeriodSec": 0.001,
+            "pulseRiseSec": 1e-09,
+            "pulseWidthSec": 0.0005,
+            "sineAmplitude": 5.0,
+            "sineDelaySec": 0.0,
+            "sineFrequencyHz": 1000.0,
+            "sineOffset": 0.0,
+            "sinePhaseDeg": 0.0,
+            "transientWaveform": 0
+         },
+         "rotation": 90,
+         "x": 0,
+         "y": 0
+      },
+      {
+         "id": 3,
+         "kind": "resistor",
+         "name": "R1",
+         "properties": {
+            "resistanceOhm": 1000.0
+         },
+         "rotation": 0,
+         "x": 0,
+         "y": 2
+      },
+      {
+         "id": 4,
+         "kind": "resistor",
+         "name": "R2",
+         "properties": {
+            "resistanceOhm": 1000.0
+         },
+         "rotation": 270,
+         "x": 2,
+         "y": 2
+      }
+   ],
+   "format": "electric-circuit-analyzer",
+   "labels": [],
+   "name": "Voltage divider",
+   "settings": {
+      "gminSiemens": 1e-12,
+      "initialConditions": 0,
+      "integration": 0,
+      "kind": 0,
+      "linearPointCount": 50,
+      "maximumStepSec": 1e-06,
+      "pointsPerDecade": 20,
+      "stopTimeSec": 0.001,
+      "sweepScale": 0,
+      "sweepStartHz": 10.0,
+      "sweepStopHz": 1000000.0,
+      "updateDcOnEdit": 1
+   },
+   "version": 1,
+   "wires": [
+      {
+         "id": 5,
+         "name": "",
+         "points": [
+            {
+               "x": 2,
+               "y": 0
+            },
+            {
+               "x": 0,
+               "y": 0
+            }
+         ]
+      }
+   ]
+}

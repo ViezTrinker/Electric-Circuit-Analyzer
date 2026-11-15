@@ -166,6 +166,23 @@ public:
     */
    void RemoveWiresTouching(uint64_t componentId);
 
+   /*!
+    * \brief Moves a part and the wire vertices that sit on its pins.
+    *
+    * A segment that would become diagonal gains a corner so the wire stays orthogonal.
+    *
+    * \param[in] componentId Part to move.
+    * \param[in] position New anchor on the grid.
+    */
+   Result MoveComponent(uint64_t componentId, GridPoint position);
+
+   /*!
+    * \brief Turns a part 90 degrees clockwise and follows its pins with the wires.
+    *
+    * \param[in] componentId Part to turn.
+    */
+   Result RotateComponent(uint64_t componentId);
+
 private:
    uint64_t AllocateId(void);
    bool NameExists(std::string_view name) const;

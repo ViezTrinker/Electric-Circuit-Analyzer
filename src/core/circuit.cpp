@@ -14,6 +14,79 @@ namespace
 {
 
 constexpr uint32_t MaxUndoDepth = 100;
+constexpr int32_t QuarterTurnDegrees = 90;
+constexpr int32_t FullCircleDegrees = 360;
+
+using PinPointList = std::vector<GridPoint>;
+
+PinPointList CollectPins(const Component& component)
+{
+   PinPointList pins;
+   uint8_t pinCount = PinCount(component);
+   for (uint8_t pinIndex = 0; pinIndex < pinCount; pinIndex += 1)
+   {
+      pins.push_back(PinPosition(component, pinIndex));
+   }
+   return pins;
+}
+
+void RepairOrthogonal(Wire* pWire)
+{
+   if (pWire == nullptr || pWire->points.empty())
+   {
+      return;
+   }
+   GridPointList repaired;
+   repaired.push_back(pWire->points.front());
+   for (size_t index = 1; index < pWire->points.size(); index += 1)
+   {
+      GridPoint previous = repaired.back();
+      GridPoint next = pWire->points[index];
+      if (previous == next)
+      {
+         continue;
+      }
+      if (previous.positionX != next.positionX && previous.positionY != next.positionY)
+      {
+         repaired.push_back(GridPoint{previous.positionX, next.positionY});
+      }
+      repaired.push_back(next);
+   }
+   pWire->points = std::move(repaired);
+}
+
+void RetargetWires(Circuit* pCircuit, const PinPointList& oldPins, const PinPointList& newPins)
+{
+   if (pCircuit == nullptr || oldPins.size() != newPins.size())
+   {
+      return;
+   }
+   std::vector<uint64_t> wireIds;
+   for (const Wire& wire : pCircuit->Wires())
+   {
+      wireIds.push_back(wire.id);
+   }
+   for (uint64_t wireId : wireIds)
+   {
+      Wire* pWire = pCircuit->FindWire(wireId);
+      if (pWire == nullptr)
+      {
+         continue;
+      }
+      for (GridPoint& point : pWire->points)
+      {
+         for (size_t index = 0; index < oldPins.size(); index += 1)
+         {
+            if (point == oldPins[index])
+            {
+               point = newPins[index];
+               break;
+            }
+         }
+      }
+      RepairOrthogonal(pWire);
+   }
+}
 
 } // namespace
 
@@ -281,6 +354,45 @@ void Circuit::RemoveWiresTouching(uint64_t componentId)
       }
    }
    _wires = std::move(kept);
+}
+
+Result Circuit::MoveComponent(uint64_t componentId, GridPoint position)
+{
+   Component* pComponent = FindComponent(componentId);
+   if (pComponent == nullptr)
+   {
+      return Result::Error;
+   }
+   if (pComponent->position == position)
+   {
+      return Result::Ok;
+   }
+   PinPointList oldPins = CollectPins(*pComponent);
+   pComponent->position = position;
+   RetargetWires(this, oldPins, CollectPins(*pComponent));
+   return Result::Ok;
+}
+
+Result Circuit::RotateComponent(uint64_t componentId)
+{
+   Component* pComponent = FindComponent(componentId);
+   if (pComponent == nullptr)
+   {
+      return Result::Error;
+   }
+   int32_t turned = pComponent->rotationDegrees + QuarterTurnDegrees;
+   if (turned >= FullCircleDegrees)
+   {
+      turned -= FullCircleDegrees;
+   }
+   if (IsQuarterTurn(turned) == false)
+   {
+      return Result::InvalidParameter;
+   }
+   PinPointList oldPins = CollectPins(*pComponent);
+   pComponent->rotationDegrees = turned;
+   RetargetWires(this, oldPins, CollectPins(*pComponent));
+   return Result::Ok;
 }
 
 UndoHistory::UndoHistory(void)

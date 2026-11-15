@@ -38,6 +38,26 @@ DcResult SolveOperatingPoint(const Netlist& netlist, const AnalysisSettings& set
  */
 Result CollectOperatingDrives(const Netlist& netlist, const LogicLevelList& levels, LogicDriveList* pDrives);
 
+/*!
+ * \brief True when the netlist contains a gate, clock, or other logic device.
+ *
+ * \param[in] netlist Compiled circuit.
+ */
+bool HasLogicDevice(const Netlist& netlist);
+
+/*!
+ * \brief Integrates a circuit that has both analog parts and logic.
+ *
+ * The analog step ends at the next logic event. Drives are then rebuilt.
+ * With no capacitor, inductor, or time-varying source, the solver jumps to
+ * that event and solves a new operating point.
+ *
+ * \param[in] netlist Compiled circuit.
+ * \param[in] settings Transient settings.
+ * \param[in] pCancel Optional cancel flag. May be null.
+ */
+TransientResult SolveMixedTransient(const Netlist& netlist, const AnalysisSettings& settings, CancelToken* pCancel);
+
 } // namespace Analyzer
 
 #endif // LOGIC_BRIDGE_H

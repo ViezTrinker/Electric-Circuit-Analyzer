@@ -1,6 +1,6 @@
 /*!
  * \file test_mixed.cpp
- * \brief Checks the DC logic bridge, a frozen AC gate, an LED, and a switch.
+ * \brief Checks the mixed DC bridge, a frozen AC gate, and a clocked LED.
  */
 
 #include "core/netlist_builder.h"
@@ -226,6 +226,68 @@ void TestSwitchDivider(void)
    ExpectNear(NetVoltageOfPin(circuit, resistiveResult, top, 1), expectedMid, 1.0e-4, "resistive closed switch midpoint");
 }
 
+void TestClockLed(void)
+{
+   constexpr double SeriesOhm = 220.0;
+   constexpr double StopSec = 0.0015;
+   constexpr double StepSec = 1.0e-5;
+   constexpr double MinimumOnCurrent = 0.001;
+   constexpr double MaximumOffCurrent = 0.0001;
+   constexpr double LowWindowStartSec = 0.0005;
+   constexpr double LowWindowStopSec = 0.0009;
+   constexpr double HighWindowStartSec = 0.001;
+   constexpr double HighWindowStopSec = 0.0014;
+   Analyzer::Circuit circuit;
+   circuit.Settings().stopTimeSec = StopSec;
+   circuit.Settings().maximumStepSec = StepSec;
+   uint64_t clock = Place(&circuit, Analyzer::ComponentKind::Clock, 0, 0, 0);
+   uint64_t series = Place(&circuit, Analyzer::ComponentKind::Resistor, 4, 0, 0);
+   Place(&circuit, Analyzer::ComponentKind::Led, 6, 0, 0);
+   Place(&circuit, Analyzer::ComponentKind::Ground, 8, 0, 0);
+   SetNumber(&circuit, series, Analyzer::NumericProperty::ResistanceOhm, SeriesOhm);
+   SetNumber(&circuit, clock, Analyzer::NumericProperty::PropagationDelaySec, 0.0);
+   Analyzer::TransientResult result = Analyzer::SolveTransient(circuit, nullptr);
+   Expect(Analyzer::IsOk(result.code), result.message);
+   Analyzer::Netlist netlist;
+   Expect(Analyzer::IsOk(Analyzer::BuildNetlist(circuit, &netlist)), "clock led netlist");
+   uint32_t leftNet = 0;
+   uint32_t rightNet = 0;
+   for (const Analyzer::NetlistDevice& device : netlist.devices)
+   {
+      if (device.componentId == series && device.pinCount >= 2)
+      {
+         leftNet = device.nets[0];
+         rightNet = device.nets[1];
+      }
+   }
+   bool sawOff = false;
+   bool sawSecondOn = false;
+   double firstCurrent = 0.0;
+   if (result.samples.empty() == false && leftNet < result.samples.front().netVoltage.size() && rightNet < result.samples.front().netVoltage.size())
+   {
+      firstCurrent = std::abs(result.samples.front().netVoltage[leftNet] - result.samples.front().netVoltage[rightNet]) / SeriesOhm;
+   }
+   for (const Analyzer::TransientSample& sample : result.samples)
+   {
+      if (leftNet >= sample.netVoltage.size() || rightNet >= sample.netVoltage.size())
+      {
+         continue;
+      }
+      double current = std::abs(sample.netVoltage[leftNet] - sample.netVoltage[rightNet]) / SeriesOhm;
+      if (sample.timeSec >= LowWindowStartSec && sample.timeSec < LowWindowStopSec)
+      {
+         sawOff = current < MaximumOffCurrent;
+      }
+      if (sample.timeSec >= HighWindowStartSec && sample.timeSec < HighWindowStopSec)
+      {
+         sawSecondOn = current > MinimumOnCurrent;
+      }
+   }
+   Expect(firstCurrent > MinimumOnCurrent, "clock led conducts while high");
+   Expect(sawOff, "clock led is off while low");
+   Expect(sawSecondOn, "clock led conducts again");
+}
+
 } // namespace
 
 int RunMixedTests(void)
@@ -235,5 +297,6 @@ int RunMixedTests(void)
    TestInverterAcHasNoGain();
    TestLedConducts();
    TestSwitchDivider();
+   TestClockLed();
    return gFailures;
 }

@@ -1,6 +1,6 @@
 # Architecture
 
-The analyzer is a library plus the window executable `eca_analyzer`. A schematic is a `Circuit`. Analysis compiles that document into a `Netlist`, then solves the analog matrix, the logic event queue, or both. The window in `src/ui` places parts, edits one numeric value, and calls `SolveDc`. Wire drawing, undo, plots, and file load stay outside that window for now.
+The analyzer is a library plus the window executable `eca_analyzer`. A schematic is a `Circuit`. Analysis compiles that document into a `Netlist`, then solves the analog matrix, the logic event queue, or both. The window in `src/ui` places parts, drags them to a new cell, turns them with R, and draws orthogonal wires. Wire vertices that sit on a moved or rotated pin follow that pin, and a diagonal segment gains a corner. The window edits one numeric value, supports undo and redo, and runs DC, AC, and transient on a worker thread. DC draws one bar per node voltage. AC draws magnitude and phase. A transient draws the changing node voltages or logic levels, and a spectrum when an analog voltage moves. The File menu opens the schematics in `examples/`. A full property panel stays outside that window for now.
 
 ```text
 Circuit
@@ -15,7 +15,7 @@ BuildNetlist
         +--> SolveDigitalDc / SolveDigitalTransient
 ```
 
-`SolveDc` repeats the analog solve and the digital settle. A logic input on an analog net reads `Vil` and `Vih`. A logic output on an analog net is a voltage behind `outputResistanceOhm`. Pure digital nets stay out of the matrix. `SolveAc` freezes those drives: the sweep stamps the resistance and no small-signal path through the gate. `SolveTransient` still uses the digital event queue only when the netlist has no analog part. A mixed transient does not yet stop on digital events.
+`SolveDc` repeats the analog solve and the digital settle. A logic input on an analog net reads `Vil` and `Vih`. A logic output on an analog net is a voltage behind `outputResistanceOhm`. Pure digital nets stay out of the matrix. `SolveAc` freezes those drives: the sweep stamps the resistance and no small-signal path through the gate. `SolveTransient` uses the digital event queue alone when the netlist has no analog part. A mixed transient ends each analog step at the next logic event, then rebuilds the drives. With no capacitor, inductor, or time-varying source it jumps to that event and solves a new operating point.
 
 ## Document
 
@@ -80,4 +80,4 @@ Setup and hold, when non-zero, set Q to Conflict until the next valid edge and a
 
 ## File format
 
-The intended file is UTF-8 `.eca.json`, format name `electric-circuit-analyzer`, version 1, one circuit per file. `third_party/nlohmann/json.hpp` is present for that reader. Nothing writes or reads a circuit file yet. Unknown versions and unknown kind keys are specified to be rejected once that code exists.
+`WriteCircuitText` and `ReadCircuitText` store one circuit as UTF-8 `.eca.json`. The format name is `electric-circuit-analyzer` and the version is 1. The file holds the analysis settings, parts, wires, and net labels. Enumerated fields are stored as their integer codes. A property the part editor would reject is left out, so every stored field can be applied on load. Switch event times and DIP channel states are extra keys beside those properties. An unknown version, an unknown component kind, or an unknown key rejects the whole text and leaves the destination circuit unchanged. The window opens and saves that text from the File menu.

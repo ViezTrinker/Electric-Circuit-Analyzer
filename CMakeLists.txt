@@ -13,6 +13,10 @@ add_library(eca_core STATIC
    src/core/cancel_token.h
    src/core/circuit.cpp
    src/core/circuit.h
+   src/core/circuit_file.cpp
+   src/core/circuit_file.h
+   src/core/example_circuits.cpp
+   src/core/example_circuits.h
    src/core/component.h
    src/core/component_access.cpp
    src/core/component_catalog.cpp
@@ -57,9 +61,12 @@ add_executable(eca_tests
    tests/test_digital.cpp
    tests/test_mixed.cpp
    tests/test_devices.cpp
+   tests/test_examples.cpp
+   tests/test_file.cpp
 )
 
 target_link_libraries(eca_tests PRIVATE eca_core)
+target_compile_definitions(eca_tests PRIVATE "ECA_EXAMPLES_DIR=\"${CMAKE_SOURCE_DIR}/examples\"")
 
 if(MSVC)
    target_compile_options(eca_tests PRIVATE /W4 /permissive- /utf-8)
@@ -99,8 +106,12 @@ qt_standard_project_setup()
 qt_add_executable(eca_analyzer
    WIN32
    src/main.cpp
+   src/ui/analysis_worker.cpp
+   src/ui/analysis_worker.h
    src/ui/main_window.cpp
    src/ui/main_window.h
+   src/ui/result_plot.cpp
+   src/ui/result_plot.h
    src/ui/schematic_view.cpp
    src/ui/schematic_view.h
 )
@@ -114,6 +125,14 @@ else()
 endif()
 
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT eca_analyzer)
+
+file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/examples")
+add_custom_command(TARGET eca_analyzer POST_BUILD
+   COMMAND ${CMAKE_COMMAND} -E copy_directory
+      "${CMAKE_SOURCE_DIR}/examples"
+      "$<TARGET_FILE_DIR:eca_analyzer>/examples"
+   COMMENT "Copying example circuits"
+)
 
 if(WIN32)
    get_filename_component(QT_BIN_DIRECTORY "${Qt6_DIR}/../../../bin" ABSOLUTE)

@@ -1,6 +1,6 @@
 # Electric Circuit Analyzer
 
-Desktop circuit analyzer for linear and nonlinear DC, AC sweeps, transient runs, and event-driven logic. The window executable is `eca_analyzer`. It places parts on a grid, edits the main value of a selected part, and runs a DC operating point. The library behind that window is covered by tests.
+Desktop circuit analyzer for linear and nonlinear DC, AC sweeps, transient runs, and event-driven logic. The window executable is `eca_analyzer`. It places, moves, and rotates parts, draws orthogonal wires, edits the main value of a selected part, and saves a `.eca.json` document. DC draws node voltages, AC draws a Bode diagram, and a transient draws time curves plus a spectrum when a node voltage changes. Example circuits live in `examples/`. The library behind that window is covered by tests.
 
 The program, its messages, and this documentation are in English.
 
@@ -12,10 +12,10 @@ The program, its messages, and this documentation are in English.
 | --- | --- |
 | DC | Modified nodal analysis. Resistors, sources, ideal meters, switches, diodes, LEDs, BJTs, MOSFETs, and the 555 latch. Newton-Raphson for the nonlinear devices. |
 | AC | Small-signal sweep of linear R, L, and C around the DC operating point. The 555 latch stays at the DC state. |
-| Transient | Backward Euler or trapezoidal integration for linear R, L, and C, with DC, sine, and pulse sources. The 555 latch updates from the trigger and threshold. |
+| Transient | Backward Euler or trapezoidal integration for linear R, L, and C, with DC, sine, and pulse sources. The 555 latch updates from the trigger and threshold. A mixed run stops at the next logic event and updates the drive. |
 | Logic | Gates, latches, flip-flops, clocks, counters, shift registers, decoders, and BCD-to-7-segment. A circuit with no analog parts runs as a pure event queue. |
 
-A mixed DC operating point stamps each logic output that shares a net with an analog part as a voltage behind its output resistance, and reads analog voltages back through `Vil` and `Vih`. An AC sweep freezes that drive, so a gate has no small-signal gain. A mixed transient does not yet do this. See [docs/architecture.md](docs/architecture.md).
+A mixed DC operating point stamps each logic output that shares a net with an analog part as a voltage behind its output resistance, and reads analog voltages back through `Vil` and `Vih`. An AC sweep freezes that drive, so a gate has no small-signal gain. A mixed transient keeps that drive only until the next logic event. See [docs/architecture.md](docs/architecture.md).
 
 ## Build
 
@@ -44,7 +44,8 @@ ctest --test-dir build --output-on-failure
 
 ```text
 src/main.cpp    Starts the window
-src/ui          Schematic sheet, part palette, properties, DC results
+src/ui          Schematic sheet, part palette, properties, and diagrams
+examples        Voltage divider, RC, RLC, rectifier, transistors, logic, 555
 src/core        Circuit document, parts, nets, SI numbers, result codes
 src/solver      Dense MNA, device equations, DC / AC / transient
 src/digital     Event-driven logic kernel
@@ -66,10 +67,8 @@ This project is licensed under the [MIT License](LICENSE). The vendored JSON hea
 
 ## Not in this tree yet
 
-- Drawing wires, rotating parts, undo, and save/load from the window
-- Bode, transient, timing, and spectrum plots
-- Saving and loading `.eca.json` (the JSON header is vendored, the reader and writer are not)
-- Mixed-signal bridge: logic driving a resistor or LED, and analog voltages read by a gate, ADC, or 555
+- A full property panel
+- Pull-up and pull-down parts on a mixed analog net are not yet resistors to a supply
 - Small-signal parameters of diodes and transistors in an AC sweep
 - A full 74xx catalog, RAM, ROM, and FPGA fabrics
 - VHDL, Verilog, SPICE import, noise, op-amps, and transformers

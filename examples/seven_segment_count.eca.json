@@ -1,0 +1,330 @@
+{
+   "components": [
+      {
+         "id": 1,
+         "kind": "ground",
+         "name": "GND1",
+         "properties": {},
+         "rotation": 0,
+         "x": 20,
+         "y": 0
+      },
+      {
+         "id": 2,
+         "kind": "counter",
+         "name": "U1",
+         "properties": {
+            "enablePolarity": 0,
+            "fallTimeSec": 5e-09,
+            "highThresholdVolt": 3.5,
+            "initialValue": 0.0,
+            "logicFamily": 1,
+            "lowThresholdVolt": 1.5,
+            "outputResistanceOhm": 100.0,
+            "outputStage": 0,
+            "propagationDelaySec": 0.0,
+            "riseTimeSec": 5e-09,
+            "supplyVoltageVolt": 5.0,
+            "vihVolt": 3.5,
+            "vilVolt": 1.5,
+            "vohVolt": 5.0,
+            "volVolt": 0.0
+         },
+         "rotation": 0,
+         "x": 0,
+         "y": 0
+      },
+      {
+         "id": 3,
+         "kind": "clock",
+         "name": "CLK1",
+         "properties": {
+            "delaySec": 0.0,
+            "dutyCycle": 0.5,
+            "enablePolarity": 0,
+            "fallTimeSec": 5e-09,
+            "frequencyHz": 1000.0,
+            "highThresholdVolt": 3.5,
+            "logicFamily": 1,
+            "lowThresholdVolt": 1.5,
+            "outputResistanceOhm": 100.0,
+            "outputStage": 0,
+            "propagationDelaySec": 0.0,
+            "riseTimeSec": 5e-09,
+            "startLevel": 0,
+            "supplyVoltageVolt": 5.0,
+            "vihVolt": 3.5,
+            "vilVolt": 1.5,
+            "vohVolt": 5.0,
+            "volVolt": 0.0
+         },
+         "rotation": 0,
+         "x": -4,
+         "y": 0
+      },
+      {
+         "id": 4,
+         "kind": "pullDown",
+         "name": "PD1",
+         "properties": {
+            "enablePolarity": 0,
+            "fallTimeSec": 5e-09,
+            "highThresholdVolt": 3.5,
+            "logicFamily": 1,
+            "lowThresholdVolt": 1.5,
+            "outputResistanceOhm": 100.0,
+            "outputStage": 0,
+            "propagationDelaySec": 1e-08,
+            "resistanceOhm": 1000.0,
+            "riseTimeSec": 5e-09,
+            "supplyVoltageVolt": 5.0,
+            "vihVolt": 3.5,
+            "vilVolt": 1.5,
+            "vohVolt": 5.0,
+            "volVolt": 0.0
+         },
+         "rotation": 0,
+         "x": 0,
+         "y": 2
+      },
+      {
+         "id": 5,
+         "kind": "pullUp",
+         "name": "PU1",
+         "properties": {
+            "enablePolarity": 0,
+            "fallTimeSec": 5e-09,
+            "highThresholdVolt": 3.5,
+            "logicFamily": 1,
+            "lowThresholdVolt": 1.5,
+            "outputResistanceOhm": 100.0,
+            "outputStage": 0,
+            "propagationDelaySec": 1e-08,
+            "resistanceOhm": 1000.0,
+            "riseTimeSec": 5e-09,
+            "supplyVoltageVolt": 5.0,
+            "vihVolt": 3.5,
+            "vilVolt": 1.5,
+            "vohVolt": 5.0,
+            "volVolt": 0.0
+         },
+         "rotation": 0,
+         "x": 0,
+         "y": 4
+      },
+      {
+         "id": 6,
+         "kind": "bcdToSevenSegment",
+         "name": "U2",
+         "properties": {
+            "enablePolarity": 0,
+            "fallTimeSec": 5e-09,
+            "highThresholdVolt": 3.5,
+            "inputCount": 2.0,
+            "logicFamily": 1,
+            "lowThresholdVolt": 1.5,
+            "outputResistanceOhm": 100.0,
+            "outputStage": 0,
+            "propagationDelaySec": 1e-08,
+            "riseTimeSec": 5e-09,
+            "supplyVoltageVolt": 5.0,
+            "vihVolt": 3.5,
+            "vilVolt": 1.5,
+            "vohVolt": 5.0,
+            "volVolt": 0.0
+         },
+         "rotation": 0,
+         "x": 8,
+         "y": 0
+      },
+      {
+         "id": 7,
+         "kind": "sevenSegment",
+         "name": "DISP1",
+         "properties": {
+            "forwardCurrentAmpere": 0.01,
+            "forwardVoltageVolt": 2.0,
+            "ledColor": 0,
+            "segmentCommon": 0,
+            "segmentResistanceOhm": 330.0
+         },
+         "rotation": 0,
+         "x": 16,
+         "y": 0
+      }
+   ],
+   "format": "electric-circuit-analyzer",
+   "labels": [],
+   "name": "Seven-segment count",
+   "settings": {
+      "gminSiemens": 1e-12,
+      "initialConditions": 0,
+      "integration": 0,
+      "kind": 2,
+      "linearPointCount": 50,
+      "maximumStepSec": 1e-06,
+      "pointsPerDecade": 20,
+      "stopTimeSec": 0.0025,
+      "sweepScale": 0,
+      "sweepStartHz": 10.0,
+      "sweepStopHz": 1000000.0,
+      "updateDcOnEdit": 1
+   },
+   "version": 1,
+   "wires": [
+      {
+         "id": 8,
+         "name": "",
+         "points": [
+            {
+               "x": 4,
+               "y": 0
+            },
+            {
+               "x": 8,
+               "y": 0
+            }
+         ]
+      },
+      {
+         "id": 9,
+         "name": "",
+         "points": [
+            {
+               "x": 4,
+               "y": 2
+            },
+            {
+               "x": 8,
+               "y": 2
+            }
+         ]
+      },
+      {
+         "id": 10,
+         "name": "",
+         "points": [
+            {
+               "x": 4,
+               "y": 4
+            },
+            {
+               "x": 8,
+               "y": 4
+            }
+         ]
+      },
+      {
+         "id": 11,
+         "name": "",
+         "points": [
+            {
+               "x": 4,
+               "y": 6
+            },
+            {
+               "x": 8,
+               "y": 6
+            }
+         ]
+      },
+      {
+         "id": 12,
+         "name": "",
+         "points": [
+            {
+               "x": 12,
+               "y": 0
+            },
+            {
+               "x": 16,
+               "y": 0
+            }
+         ]
+      },
+      {
+         "id": 13,
+         "name": "",
+         "points": [
+            {
+               "x": 12,
+               "y": 2
+            },
+            {
+               "x": 16,
+               "y": 2
+            }
+         ]
+      },
+      {
+         "id": 14,
+         "name": "",
+         "points": [
+            {
+               "x": 12,
+               "y": 4
+            },
+            {
+               "x": 16,
+               "y": 4
+            }
+         ]
+      },
+      {
+         "id": 15,
+         "name": "",
+         "points": [
+            {
+               "x": 12,
+               "y": 6
+            },
+            {
+               "x": 16,
+               "y": 6
+            }
+         ]
+      },
+      {
+         "id": 16,
+         "name": "",
+         "points": [
+            {
+               "x": 12,
+               "y": 8
+            },
+            {
+               "x": 16,
+               "y": 8
+            }
+         ]
+      },
+      {
+         "id": 17,
+         "name": "",
+         "points": [
+            {
+               "x": 12,
+               "y": 10
+            },
+            {
+               "x": 16,
+               "y": 10
+            }
+         ]
+      },
+      {
+         "id": 18,
+         "name": "",
+         "points": [
+            {
+               "x": 12,
+               "y": 12
+            },
+            {
+               "x": 16,
+               "y": 12
+            }
+         ]
+      }
+   ]
+}

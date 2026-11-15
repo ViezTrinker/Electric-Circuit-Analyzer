@@ -608,4 +608,236 @@ Result CollectOperatingDrives(const Netlist& netlist, const LogicLevelList& leve
    return AppendDrives(netlist, touch, hold, levels, pDrives);
 }
 
+bool HasLogicDevice(const Netlist& netlist)
+{
+   for (const NetlistDevice& device : netlist.devices)
+   {
+      if (IsLogicDevice(device.kind))
+      {
+         return true;
+      }
+   }
+   return false;
+}
+
+bool StoresEnergy(const Netlist& netlist)
+{
+   for (const NetlistDevice& device : netlist.devices)
+   {
+      if (device.kind == ComponentKind::Capacitor || device.kind == ComponentKind::Inductor)
+      {
+         return true;
+      }
+      if (const VoltageSourceProperties* pVoltage = std::get_if<VoltageSourceProperties>(&device.properties))
+      {
+         if (pVoltage->transientWaveform != SourceWaveform::Dc)
+         {
+            return true;
+         }
+      }
+      if (const CurrentSourceProperties* pCurrent = std::get_if<CurrentSourceProperties>(&device.properties))
+      {
+         if (pCurrent->transientWaveform != SourceWaveform::Dc)
+         {
+            return true;
+         }
+      }
+   }
+   return false;
+}
+
+struct SessionClose
+{
+   LogicSession* pSession;
+
+   ~SessionClose(void)
+   {
+      CloseLogicSession(pSession);
+   }
+};
+
+void AppendMixedSample(TransientResult* pResult, const VoltageList& voltage, const LogicLevelList& levels, double timeSec)
+{
+   if (pResult == nullptr)
+   {
+      return;
+   }
+   TransientSample sample = {};
+   sample.timeSec = timeSec;
+   sample.netVoltage = voltage;
+   sample.netLevel = levels;
+   if (sample.netVoltage.size() < levels.size())
+   {
+      sample.netVoltage.resize(levels.size(), 0.0);
+   }
+   if (sample.netLevel.size() < sample.netVoltage.size())
+   {
+      sample.netLevel.resize(sample.netVoltage.size(), LogicLevel::HighZ);
+   }
+   pResult->samples.push_back(sample);
+}
+
+TransientResult FailedTransient(const DcResult& bias)
+{
+   TransientResult result = {};
+   result.code = bias.code;
+   result.message = bias.message.empty() ? Describe(bias.code) : bias.message;
+   result.initial = bias;
+   result.warnings = bias.warnings;
+   return result;
+}
+
+TransientResult SolveMixedTransient(const Netlist& netlist, const AnalysisSettings& settings, CancelToken* pCancel)
+{
+   constexpr double PicosecondsPerSecond = 1.0e12;
+   constexpr uint32_t MaxMixedEvents = 100000;
+   TransientResult result = {};
+   if (settings.stopTimeSec <= 0.0 || settings.maximumStepSec <= 0.0)
+   {
+      result.code = Result::InvalidTimeStep;
+      result.message = Describe(Result::InvalidTimeStep);
+      return result;
+   }
+   DcResult bias = SolveOperatingPoint(netlist, settings, pCancel);
+   if (IsErr(bias.code))
+   {
+      return FailedTransient(bias);
+   }
+   HoldMask touch = AnalogTouch(netlist);
+   HoldMask hold = HoldFromTouch(netlist, touch);
+   LogicSession* pSession = nullptr;
+   LogicLevelList levels;
+   Result opened = OpenLogicSession(netlist, settings, hold, bias.netLevel, &bias.netVoltage, &pSession, &levels);
+   SessionClose guard = {};
+   guard.pSession = pSession;
+   if (IsErr(opened))
+   {
+      result.code = opened;
+      result.message = Describe(opened);
+      result.initial = bias;
+      return result;
+   }
+   LogicDriveList drives;
+   Result collected = CollectOperatingDrives(netlist, levels, &drives);
+   if (IsErr(collected))
+   {
+      result.code = collected;
+      result.message = Describe(collected);
+      result.initial = bias;
+      return result;
+   }
+   DcResult point = SolveDcAnalog(netlist, settings, pCancel, &drives);
+   if (IsErr(point.code))
+   {
+      return FailedTransient(point);
+   }
+   VoltageList voltage = point.netVoltage;
+   result.initial = bias;
+   result.initial.netVoltage = voltage;
+   result.initial.netLevel = levels;
+   result.initial.code = Result::Ok;
+   result.initial.message = Describe(Result::Ok);
+   result.warnings = bias.warnings;
+   AppendMixedSample(&result, voltage, levels, 0.0);
+   bool stored = StoresEnergy(netlist);
+   TransientContinuity continuity = {};
+   if (stored)
+   {
+      continuity.ready = true;
+      continuity.timeSec = 0.0;
+      continuity.stepSec = settings.maximumStepSec;
+      continuity.voltage = voltage;
+      continuity.inductorCurrent.assign(netlist.devices.size(), 0.0);
+      continuity.timerLevel.assign(netlist.devices.size(), 0);
+      continuity.timerChangeAt.assign(netlist.devices.size(), -1.0);
+      if (point.deviceState.size() == netlist.devices.size())
+      {
+         continuity.timerLevel = point.deviceState;
+      }
+      continuity.acceptedSteps = 1;
+   }
+   double timeSec = 0.0;
+   for (uint32_t eventIndex = 0; eventIndex < MaxMixedEvents && timeSec < settings.stopTimeSec; eventIndex += 1)
+   {
+      if (pCancel != nullptr && pCancel->IsRequested())
+      {
+         result.code = Result::Error;
+         result.message = "Cancelled.";
+         return result;
+      }
+      int64_t nextPs = NextLogicEventPicoseconds(pSession);
+      double nextSec = settings.stopTimeSec;
+      bool haveEvent = false;
+      if (nextPs >= 0)
+      {
+         nextSec = static_cast<double>(nextPs) / PicosecondsPerSecond;
+         haveEvent = true;
+      }
+      if (nextSec > settings.stopTimeSec)
+      {
+         nextSec = settings.stopTimeSec;
+         haveEvent = false;
+      }
+      if (stored && nextSec > timeSec)
+      {
+         TransientResult slice = SolveTransientAnalog(netlist, settings, pCancel, &drives, nextSec, &continuity);
+         if (IsErr(slice.code))
+         {
+            result.code = slice.code;
+            result.message = slice.message;
+            return result;
+         }
+         for (TransientSample sample : slice.samples)
+         {
+            sample.netLevel = levels;
+            result.samples.push_back(sample);
+         }
+         timeSec = continuity.timeSec;
+         voltage = continuity.voltage;
+      }
+      else if (stored == false && nextSec > timeSec)
+      {
+         timeSec = nextSec;
+      }
+      if (haveEvent == false)
+      {
+         if (result.samples.empty() || result.samples.back().timeSec + 1.0e-15 < settings.stopTimeSec)
+         {
+            AppendMixedSample(&result, voltage, levels, settings.stopTimeSec);
+         }
+         break;
+      }
+      LogicLevelList sensed = levels;
+      SenseHeldLevels(netlist, hold, voltage, &sensed);
+      Result advanced = AdvanceLogicSession(pSession, nextPs, &sensed, pCancel, &levels);
+      if (IsErr(advanced))
+      {
+         result.code = advanced;
+         result.message = Describe(advanced);
+         return result;
+      }
+      collected = CollectOperatingDrives(netlist, levels, &drives);
+      if (IsErr(collected))
+      {
+         result.code = collected;
+         result.message = Describe(collected);
+         return result;
+      }
+      if (stored)
+      {
+         continue;
+      }
+      point = SolveDcAnalog(netlist, settings, pCancel, &drives);
+      if (IsErr(point.code))
+      {
+         return FailedTransient(point);
+      }
+      voltage = point.netVoltage;
+      AppendMixedSample(&result, voltage, levels, timeSec);
+   }
+   result.code = Result::Ok;
+   result.message = Describe(Result::Ok);
+   return result;
+}
+
 } // namespace Analyzer

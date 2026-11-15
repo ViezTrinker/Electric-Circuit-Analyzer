@@ -7,11 +7,15 @@
 #define MAIN_WINDOW_H
 
 #include <QKeyEvent>
+#include <QList>
 #include <QMainWindow>
+#include <QString>
 
+#include "analysis_worker.h"
 #include "core/circuit.h"
 #include "schematic_view.h"
 
+class QAction;
 class QLabel;
 class QLineEdit;
 class QTreeWidget;
@@ -20,6 +24,17 @@ class QPlainTextEdit;
 
 namespace Analyzer
 {
+
+class ResultPlot;
+
+/*!
+ * \brief Whether the Run actions are available.
+ */
+enum class AnalysisBusy : bool
+{
+   No = false,
+   Yes = true
+};
 
 /*!
  * \brief Palette, schematic sheet, properties, and DC results.
@@ -46,11 +61,6 @@ private:
     * \brief Fills the property panel for the selected part.
     */
    void ShowSelection(void);
-
-   /*!
-    * \brief Loads the voltage divider used by the DC test.
-    */
-   void LoadVoltageDivider(void);
 
    /*!
     * \brief Places the armed part.
@@ -94,9 +104,125 @@ private:
    void OnNewCircuit(void);
 
    /*!
+    * \brief Replaces the document with a .eca.json file.
+    */
+   void OnOpenCircuit(void);
+
+   /*!
+    * \brief Writes the document to the current path, or asks for one.
+    */
+   void OnSaveCircuit(void);
+
+   /*!
+    * \brief Asks for a path and writes the document.
+    */
+   void OnSaveCircuitAs(void);
+
+   /*!
+    * \brief Restores the document from before the last edit.
+    */
+   void OnUndo(void);
+
+   /*!
+    * \brief Restores a document that was undone.
+    */
+   void OnRedo(void);
+
+   /*!
+    * \brief Starts an orthogonal wire. Enter keeps it and Escape cancels it.
+    */
+   void OnDrawWire(void);
+
+   /*!
+    * \brief Adds one grid point to the wire being drawn.
+    *
+    * \param[in] positionX Grid column.
+    * \param[in] positionY Grid row.
+    */
+   void OnWirePoint(int positionX, int positionY);
+
+   /*!
+    * \brief Stores the wire when it has at least two points.
+    */
+   void OnWireFinish(void);
+
+   /*!
+    * \brief Moves the dropped part and the wires on its pins.
+    *
+    * \param[in] componentId Part that moved.
+    * \param[in] positionX New grid column.
+    * \param[in] positionY New grid row.
+    */
+   void OnComponentMoved(qulonglong componentId, int positionX, int positionY);
+
+   /*!
+    * \brief Turns the selected part 90 degrees clockwise.
+    */
+   void OnRotateRequested(void);
+
+   /*!
+    * \brief Opens one example file from the examples directory.
+    */
+   void OnOpenExample(void);
+
+   /*!
     * \brief Solves the DC operating point and lists it.
     */
    void OnRunDc(void);
+
+   /*!
+    * \brief Runs the AC sweep and draws the Bode diagram.
+    */
+   void OnRunAc(void);
+
+   /*!
+    * \brief Runs the transient analysis and draws time and spectrum diagrams.
+    */
+   void OnRunTransient(void);
+
+   /*!
+    * \brief Asks the active analysis to stop.
+    */
+   void OnCancelAnalysis(void);
+
+   /*!
+    * \brief Shows the result after the worker finishes.
+    */
+   void OnAnalysisFinished(void);
+
+   /*!
+    * \brief Starts one analysis on the worker thread.
+    *
+    * \param[in] kind DC, AC, or transient.
+    */
+   void StartAnalysis(AnalysisKind kind);
+
+   /*!
+    * \brief Enables or disables the Run actions.
+    *
+    * \param[in] busy Yes while a worker is running.
+    */
+   void SetAnalysisBusy(AnalysisBusy busy);
+
+   /*!
+    * \brief Remembers the document and its file path from before a successful edit.
+    *
+    * \param[in] before Document state to restore with Undo.
+    * \param[in] pathBefore File path to restore with Undo.
+    */
+   void CommitEdit(const Circuit& before, const QString& pathBefore);
+
+   /*!
+    * \brief Enables Undo and Redo to match the history.
+    */
+   void UpdateHistoryActions(void);
+
+   /*!
+    * \brief Writes JSON to a path and remembers that path.
+    *
+    * \param[in] path Destination file path.
+    */
+   void SaveCircuitFile(const QString& path);
 
    /*!
     * \brief Shows a short description of the window.
@@ -118,10 +244,23 @@ private:
    QLabel* _pValueCaption;
    QLineEdit* _pValueEdit;
    QPlainTextEdit* _pResults;
+   ResultPlot* _pPlot;
+   QAction* _pUndoAction;
+   QAction* _pRedoAction;
+   QAction* _pRunDcAction;
+   QAction* _pRunAcAction;
+   QAction* _pRunTransientAction;
+   QAction* _pCancelAction;
+   AnalysisWorker _worker;
    Placement _placement;
    ComponentKind _armedKind;
    NumericProperty _editedProperty;
    bool _updatingProperties;
+   UndoHistory _history;
+   QList<QString> _savedPaths;
+   QList<QString> _redoPaths;
+   QString _documentPath;
+   GridPointList _wirePoints;
 };
 
 } // namespace Analyzer

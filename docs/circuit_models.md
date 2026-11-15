@@ -16,11 +16,11 @@ Currents into a device are positive unless a section below says otherwise. Branc
 | Inductor | 0, 1 | Short at DC when series R is 0, otherwise a resistor. Backward Euler uses `h/L`. Trapezoidal currently stamps `2h/L`. |
 | Ground | 1 | Net 0. |
 
-The diode knee is not a hard clamp. `forwardVoltageVolt` is the junction voltage at `forwardCurrentAmpere`, default 0.7 V at 1 mA. Saturation current follows from that point and the emission coefficient. Series resistance, when greater than zero, sits outside the junction on an internal node. Positive current is anode to cathode. The LED uses the same junction and adds a color for the schematic.
+The diode knee is not a hard clamp. `forwardVoltageVolt` is the junction voltage at `forwardCurrentAmpere`, default 0.7 V at 1 mA. Saturation current follows from that point and the emission coefficient. Series resistance, when greater than zero, sits outside the junction on an internal node. Positive current is anode to cathode. The LED uses the same junction and adds a color for the schematic. Transient repeats that linearization at every accepted step. Junction capacitance and transit time are stored and are not stamped.
 
-The BJT is an Ebers-Moll transport model. Pins are collector, base, emitter. Currents are into the device. An Early voltage of 0 means infinite Early voltage. Junction capacitances and transit times default to 0.
+The BJT is an Ebers-Moll transport model. Pins are collector, base, emitter. Currents are into the device. An Early voltage of 0 means infinite Early voltage. Junction capacitances and transit times default to 0 and are not part of the transient stamp. Newton limits each base junction step to two thermal voltages.
 
-The MOSFET is Shichman-Hodges level 1 with the bulk tied to the source. Pins are drain, gate, source. `Id` is into the drain. PMOS uses the same equations on terminal voltages and threshold with the sign flipped, then flips `Id` back into the drain. The default test point `Vgs = 3 V`, `Vds = 5 V`, `Vto = 1 V`, `Kp = 2 mA/V²`, `W = L` gives `Id = 4 mA` when lambda is 0. The region boundary is smoothed over 1 mV. The exact saturation current away from that boundary is unchanged.
+The MOSFET is Shichman-Hodges level 1 with the bulk tied to the source. Transient uses the same equations. Pins are drain, gate, source. `Id` is into the drain. PMOS uses the same equations on terminal voltages and threshold with the sign flipped, then flips `Id` back into the drain. The default test point `Vgs = 3 V`, `Vds = 5 V`, `Vto = 1 V`, `Kp = 2 mA/V²`, `W = L` gives `Id = 4 mA` when lambda is 0. The region boundary is smoothed over 1 mV. The exact saturation current away from that boundary is unchanged.
 
 ## Meters and switches
 
@@ -38,7 +38,7 @@ The 555 pins are VCC, GND, TRIG, THRES, DISCH, OUT, and RESET. OUT is a resistor
 
 ## Logic levels
 
-A logic input stores nothing while the net is purely digital. High-Z on an input is Conflict, and the gate output becomes Conflict. The exception is a disabled tri-state output, which is High-Z, and an open-drain high, which is also High-Z.
+A logic input stores nothing while the net is purely digital. High-Z on an input is Conflict. A low input still forces AND low and NAND high, and a high input still forces OR high and NOR low. Any other non-binary input makes that gate output Conflict. A disabled tri-state output is High-Z, and an open-drain high is also High-Z.
 
 CMOS thresholds scale as 0.7 and 0.3 of the supply. TTL stays at Vol 0.2 V, Voh 3.4 V, Vil 0.8 V, and Vih 2.0 V until the family is Custom. The default family is CMOS 5 V. The default output resistance is 100 ohm, the delay is 10 ns, and the rise and fall times are 5 ns. Gate supply current is not modeled.
 
@@ -74,13 +74,14 @@ These are the checks in `tests/test_analysis.cpp`, `tests/test_digital.cpp`, and
 - A 1 kΩ and 1 µF low-pass has gain `1/sqrt(2)` at `1/(2πRC)`.
 - The same RC, stepped to 1 V with trapezoidal steps of 10 µs, is near `1 - exp(-1)` at 1 ms.
 - The NMOS point above draws 4 mA from the drain supply.
-- NAND and XOR match the binary truth table. A floating NAND input is Conflict.
+- NAND and XOR match the binary truth table. A floating NAND input is Conflict. One input held low forces a NAND output high.
 - An open-drain high plus a pull-up is high. Two opposite push-pull outputs are Conflict.
 - An inverter with 10 ns delay follows a clock edge 10 ns later.
 - A 1 kHz D flip-flop with D held high goes high one period plus 10 ns after `t = 0`.
 - The counter and the shift register advance once per rising edge.
 - BCD codes 0, 1, and 8 produce the usual glyphs. Code 10 is blank.
 - An inverter input tied to ground drives 5 V through 100 Ω into 1 kΩ, so the output node is 4.545 V. The same node has no AC gain.
+- A 1 kHz clock, 220 Ω, and an LED conduct only while the clock output is high. The transient step ends at each clock edge.
 - A 5 V source, 220 Ω, and the default LED conduct. An ideal switch across the lower resistor of a divider shorts that node. A 100 Ω closed switch does not.
 - A common-cathode segment tied to 5 V draws current through its 330 Ω resistor.
 - A comparator with IN+ above IN- pulls the output toward VCC. A relay coil above pull-in closes the normally open contact.

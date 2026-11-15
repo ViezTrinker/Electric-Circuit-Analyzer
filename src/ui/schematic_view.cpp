@@ -7,10 +7,14 @@
 
 #include <cmath>
 
+#include <QGraphicsEllipseItem>
+#include <QGraphicsItemGroup>
+#include <QGraphicsLineItem>
 #include <QGraphicsRectItem>
 #include <QGraphicsScene>
 #include <QGraphicsSimpleTextItem>
 #include <QPen>
+#include <QScrollBar>
 
 namespace Analyzer
 {
@@ -25,6 +29,8 @@ constexpr qreal PinRadius = 3.5;
 constexpr qreal ZoomInFactor = 1.15;
 constexpr qreal ZoomOutFactor = 1.0 / ZoomInFactor;
 constexpr int ComponentIdKey = 0;
+constexpr int AnchorXKey = 1;
+constexpr int AnchorYKey = 2;
 
 QPointF ToScene(GridPoint point)
 {
@@ -42,6 +48,13 @@ SchematicView::SchematicView(QWidget* pParent)
    : QGraphicsView(pParent)
    , _pScene(new QGraphicsScene(this))
    , _placement(Placement::Idle)
+   , _wirePreview()
+   , _pDragItem(nullptr)
+   , _dragAnchor()
+   , _dragGrab()
+   , _panStart()
+   , _spaceDown(false)
+   , _panning(false)
 {
    setScene(_pScene);
    setRenderHint(QPainter::Antialiasing, true);
@@ -66,29 +79,67 @@ void SchematicView::ShowCircuit(const Circuit& circuit)
    QPen pinPen(QColor(180, 40, 40));
    for (const Component& component : circuit.Components())
    {
+      QGraphicsItemGroup* pGroup = new QGraphicsItemGroup();
+      pGroup->setData(ComponentIdKey, QVariant(static_cast<qulonglong>(component.id)));
+      pGroup->setData(AnchorXKey, component.position.positionX);
+      pGroup->setData(AnchorYKey, component.position.positionY);
+      pGroup->setFlag(QGraphicsItem::ItemIsSelectable, true);
+      _pScene->addItem(pGroup);
       uint8_t pinCount = PinCount(component);
       if (pinCount >= 2)
       {
-         _pScene->addLine(QLineF(PinScene(component, 0), PinScene(component, static_cast<uint8_t>(pinCount - 1))), bodyPen);
+         QGraphicsLineItem* pBody = new QGraphicsLineItem(QLineF(PinScene(component, 0), PinScene(component, static_cast<uint8_t>(pinCount - 1))), pGroup);
+         pBody->setPen(bodyPen);
       }
       for (uint8_t pinIndex = 0; pinIndex < pinCount; pinIndex += 1)
       {
          QPointF pin = PinScene(component, pinIndex);
-         _pScene->addEllipse(pin.x() - PinRadius, pin.y() - PinRadius, PinRadius * 2.0, PinRadius * 2.0, pinPen);
+         QGraphicsEllipseItem* pPin = new QGraphicsEllipseItem(pin.x() - PinRadius, pin.y() - PinRadius, PinRadius * 2.0, PinRadius * 2.0, pGroup);
+         pPin->setPen(pinPen);
       }
       QPointF anchor = ToScene(component.position);
-      QGraphicsRectItem* pLabel = _pScene->addRect(anchor.x() + 6.0, anchor.y() - (LabelHeight * 0.5), LabelWidth, LabelHeight, bodyPen, QColor(255, 255, 255));
+      QGraphicsRectItem* pLabel = new QGraphicsRectItem(anchor.x() + 6.0, anchor.y() - (LabelHeight * 0.5), LabelWidth, LabelHeight, pGroup);
+      pLabel->setPen(bodyPen);
+      pLabel->setBrush(QColor(255, 255, 255));
       pLabel->setFlag(QGraphicsItem::ItemIsSelectable, true);
       pLabel->setData(ComponentIdKey, QVariant(static_cast<qulonglong>(component.id)));
-      QGraphicsSimpleTextItem* pText = _pScene->addSimpleText(QString::fromStdString(component.name + "\n" + KindLabel(component.kind)));
+      QGraphicsSimpleTextItem* pText = new QGraphicsSimpleTextItem(QString::fromStdString(component.name + "\n" + KindLabel(component.kind)), pLabel);
       pText->setPos(anchor.x() + 10.0, anchor.y() - (LabelHeight * 0.5) + 2.0);
-      pText->setParentItem(pLabel);
+   }
+   QPen previewPen(QColor(30, 110, 200), 2.0, Qt::DashLine);
+   for (size_t index = 1; index < _wirePreview.size(); index += 1)
+   {
+      _pScene->addLine(QLineF(ToScene(_wirePreview[index - 1]), ToScene(_wirePreview[index])), previewPen);
+   }
+   if (_wirePreview.size() == 1)
+   {
+      const QPointF start = ToScene(_wirePreview.front());
+      _pScene->addEllipse(start.x() - PinRadius, start.y() - PinRadius, PinRadius * 2.0, PinRadius * 2.0, previewPen);
    }
 }
 
 void SchematicView::SetPlacement(Placement placement)
 {
    _placement = placement;
+}
+
+void SchematicView::SetWirePreview(const GridPointList& points)
+{
+   _wirePreview = points;
+}
+
+uint64_t SchematicView::ComponentIdOf(QGraphicsItem* pItem) const
+{
+   while (pItem != nullptr)
+   {
+      const QVariant stored = pItem->data(ComponentIdKey);
+      if (stored.isValid())
+      {
+         return stored.toULongLong();
+      }
+      pItem = pItem->parentItem();
+   }
+   return 0;
 }
 
 uint64_t SchematicView::SelectedComponentId(void) const
@@ -98,12 +149,7 @@ uint64_t SchematicView::SelectedComponentId(void) const
    {
       return 0;
    }
-   const QVariant stored = selected.front()->data(ComponentIdKey);
-   if (stored.isValid() == false)
-   {
-      return 0;
-   }
-   return stored.toULongLong();
+   return ComponentIdOf(selected.front());
 }
 
 void SchematicView::drawBackground(QPainter* pPainter, const QRectF& rect)
@@ -126,16 +172,102 @@ void SchematicView::drawBackground(QPainter* pPainter, const QRectF& rect)
 
 void SchematicView::mousePressEvent(QMouseEvent* pEvent)
 {
-   if (_placement == Placement::Armed && pEvent->button() == Qt::LeftButton)
+   if ((_placement == Placement::Armed || _placement == Placement::Wire) && pEvent->button() == Qt::LeftButton)
    {
       const QPointF scenePoint = mapToScene(pEvent->position().toPoint());
       const int positionX = static_cast<int>(std::lround(scenePoint.x() / CellPixels));
       const int positionY = static_cast<int>(std::lround(scenePoint.y() / CellPixels));
-      emit PlaceRequested(positionX, positionY);
+      if (_placement == Placement::Armed)
+      {
+         emit PlaceRequested(positionX, positionY);
+      }
+      else
+      {
+         emit WirePointRequested(positionX, positionY);
+      }
       pEvent->accept();
       return;
    }
+   if (pEvent->button() == Qt::MiddleButton || (_spaceDown && pEvent->button() == Qt::LeftButton))
+   {
+      _panning = true;
+      _panStart = pEvent->position().toPoint();
+      pEvent->accept();
+      return;
+   }
+   if (_placement == Placement::Idle && pEvent->button() == Qt::LeftButton)
+   {
+      QGraphicsItem* pHit = itemAt(pEvent->position().toPoint());
+      const uint64_t componentId = ComponentIdOf(pHit);
+      if (componentId != 0)
+      {
+         QGraphicsItem* pGroup = pHit;
+         while (pGroup != nullptr && pGroup->parentItem() != nullptr)
+         {
+            pGroup = pGroup->parentItem();
+         }
+         _pScene->clearSelection();
+         if (pGroup != nullptr)
+         {
+            pGroup->setSelected(true);
+            _pDragItem = pGroup;
+            _dragAnchor = ToScene(GridPoint{pGroup->data(AnchorXKey).toInt(), pGroup->data(AnchorYKey).toInt()});
+            _dragGrab = mapToScene(pEvent->position().toPoint()) - _dragAnchor;
+         }
+         pEvent->accept();
+         return;
+      }
+   }
    QGraphicsView::mousePressEvent(pEvent);
+}
+
+void SchematicView::mouseMoveEvent(QMouseEvent* pEvent)
+{
+   if (_panning)
+   {
+      const QPoint current = pEvent->position().toPoint();
+      const QPoint delta = current - _panStart;
+      _panStart = current;
+      horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
+      verticalScrollBar()->setValue(verticalScrollBar()->value() - delta.y());
+      pEvent->accept();
+      return;
+   }
+   if (_pDragItem != nullptr && (pEvent->buttons() & Qt::LeftButton) != 0)
+   {
+      const QPointF scenePoint = mapToScene(pEvent->position().toPoint());
+      _pDragItem->setPos(scenePoint - _dragAnchor - _dragGrab);
+      pEvent->accept();
+      return;
+   }
+   QGraphicsView::mouseMoveEvent(pEvent);
+}
+
+void SchematicView::mouseReleaseEvent(QMouseEvent* pEvent)
+{
+   if (_panning && (pEvent->button() == Qt::MiddleButton || pEvent->button() == Qt::LeftButton))
+   {
+      _panning = false;
+      pEvent->accept();
+      return;
+   }
+   if (_pDragItem != nullptr && pEvent->button() == Qt::LeftButton)
+   {
+      const QPointF shifted = _dragAnchor + _pDragItem->pos();
+      const qulonglong componentId = static_cast<qulonglong>(ComponentIdOf(_pDragItem));
+      const int positionX = static_cast<int>(std::lround(shifted.x() / CellPixels));
+      const int positionY = static_cast<int>(std::lround(shifted.y() / CellPixels));
+      const int originX = _pDragItem->data(AnchorXKey).toInt();
+      const int originY = _pDragItem->data(AnchorYKey).toInt();
+      _pDragItem = nullptr;
+      if (positionX != originX || positionY != originY)
+      {
+         emit ComponentMoved(componentId, positionX, positionY);
+      }
+      pEvent->accept();
+      return;
+   }
+   QGraphicsView::mouseReleaseEvent(pEvent);
 }
 
 void SchematicView::keyPressEvent(QKeyEvent* pEvent)
@@ -152,7 +284,37 @@ void SchematicView::keyPressEvent(QKeyEvent* pEvent)
       pEvent->accept();
       return;
    }
+   if (_placement == Placement::Wire && (pEvent->key() == Qt::Key_Return || pEvent->key() == Qt::Key_Enter))
+   {
+      emit WireFinishRequested();
+      pEvent->accept();
+      return;
+   }
+   if (pEvent->key() == Qt::Key_R && _placement == Placement::Idle)
+   {
+      emit RotateRequested();
+      pEvent->accept();
+      return;
+   }
+   if (pEvent->key() == Qt::Key_Space)
+   {
+      _spaceDown = true;
+      pEvent->accept();
+      return;
+   }
    QGraphicsView::keyPressEvent(pEvent);
+}
+
+void SchematicView::keyReleaseEvent(QKeyEvent* pEvent)
+{
+   if (pEvent->key() == Qt::Key_Space)
+   {
+      _spaceDown = false;
+      _panning = false;
+      pEvent->accept();
+      return;
+   }
+   QGraphicsView::keyReleaseEvent(pEvent);
 }
 
 void SchematicView::wheelEvent(QWheelEvent* pEvent)

@@ -1397,6 +1397,17 @@ DcResult SolveDcAnalog(const Netlist& netlist, const AnalysisSettings& settings,
                LimitJunctionAlpha(voltage, proposed, anodeNet, cathodeNet, thermal, &alpha);
             }
          }
+         else if (device.kind == ComponentKind::Npn || device.kind == ComponentKind::Pnp)
+         {
+            const BjtProperties* pBjt = std::get_if<BjtProperties>(&device.properties);
+            if (pBjt == nullptr || device.pinCount < 3)
+            {
+               continue;
+            }
+            double thermal = pBjt->emissionCoefficient * ThermalVoltage(pBjt->temperatureCelsius);
+            LimitJunctionAlpha(voltage, proposed, device.nets[1], device.nets[2], thermal, &alpha);
+            LimitJunctionAlpha(voltage, proposed, device.nets[1], device.nets[0], thermal, &alpha);
+         }
       }
       double maxChange = 0.0;
       for (uint32_t net = 1; net < prepared.totalNets; net += 1)
@@ -1704,7 +1715,319 @@ AcResult SolveAcAnalog(const Netlist& netlist, const AnalysisSettings& settings,
    return result;
 }
 
-TransientResult SolveTransientAnalog(const Netlist& netlist, const AnalysisSettings& settings, CancelToken* pCancel)
+namespace
+{
+
+bool HasJunctionDevice(const Netlist& netlist)
+{
+   for (const NetlistDevice& device : netlist.devices)
+   {
+      if (device.kind == ComponentKind::Diode || device.kind == ComponentKind::Led
+         || device.kind == ComponentKind::Npn || device.kind == ComponentKind::Pnp
+         || device.kind == ComponentKind::Nmos || device.kind == ComponentKind::Pmos)
+      {
+         return true;
+      }
+   }
+   return false;
+}
+
+double NodeVoltage(const VoltageList& voltage, uint32_t net)
+{
+   if (net >= voltage.size())
+   {
+      return 0.0;
+   }
+   return voltage[net];
+}
+
+void LimitTransientJunctions(const Netlist& netlist, const PreparedCircuit& prepared, const VoltageList& previous, const VoltageList& next, double* pAlpha)
+{
+   if (pAlpha == nullptr)
+   {
+      return;
+   }
+   for (size_t index = 0; index < netlist.devices.size() && index < prepared.devices.size(); index += 1)
+   {
+      const NetlistDevice& device = netlist.devices[index];
+      if (device.kind == ComponentKind::Diode || device.kind == ComponentKind::Led)
+      {
+         const DiodeProperties* pDiode = std::get_if<DiodeProperties>(&device.properties);
+         if (device.kind == ComponentKind::Led)
+         {
+            const LedProperties* pLed = std::get_if<LedProperties>(&device.properties);
+            pDiode = pLed == nullptr ? nullptr : &pLed->diode;
+         }
+         if (pDiode == nullptr || device.pinCount < 2)
+         {
+            continue;
+         }
+         double thermal = pDiode->emissionCoefficient * ThermalVoltage(pDiode->temperatureCelsius);
+         LimitJunctionAlpha(previous, next, prepared.devices[index].extra[0], device.nets[1], thermal, pAlpha);
+      }
+      else if (device.kind == ComponentKind::Npn || device.kind == ComponentKind::Pnp)
+      {
+         const BjtProperties* pBjt = std::get_if<BjtProperties>(&device.properties);
+         if (pBjt == nullptr || device.pinCount < 3)
+         {
+            continue;
+         }
+         double thermal = pBjt->emissionCoefficient * ThermalVoltage(pBjt->temperatureCelsius);
+         LimitJunctionAlpha(previous, next, device.nets[1], device.nets[2], thermal, pAlpha);
+         LimitJunctionAlpha(previous, next, device.nets[1], device.nets[0], thermal, pAlpha);
+      }
+   }
+}
+
+Result StampJunctionDevices(DenseSystem<double>* pSystem, const Netlist& netlist, const PreparedCircuit& prepared, const VoltageList& operating, double gminSiemens, std::string* pMessage)
+{
+   if (pSystem == nullptr)
+   {
+      return Result::InvalidParameter;
+   }
+   for (size_t index = 0; index < netlist.devices.size() && index < prepared.devices.size(); index += 1)
+   {
+      const NetlistDevice& device = netlist.devices[index];
+      const SolverDevice& slot = prepared.devices[index];
+      if (device.kind == ComponentKind::Diode || device.kind == ComponentKind::Led)
+      {
+         const DiodeProperties* pDiode = nullptr;
+         DiodeProperties copy = {};
+         if (device.kind == ComponentKind::Led)
+         {
+            const LedProperties* pLed = std::get_if<LedProperties>(&device.properties);
+            if (pLed == nullptr)
+            {
+               if (pMessage != nullptr)
+               {
+                  *pMessage = device.name + " is missing a junction model.";
+               }
+               return Result::InvalidParameter;
+            }
+            copy = pLed->diode;
+            pDiode = &copy;
+         }
+         else
+         {
+            pDiode = std::get_if<DiodeProperties>(&device.properties);
+         }
+         if (pDiode == nullptr || device.pinCount < 2)
+         {
+            if (pMessage != nullptr)
+            {
+               *pMessage = device.name + " is missing a junction model.";
+            }
+            return Result::InvalidParameter;
+         }
+         uint32_t anode = device.nets[0];
+         uint32_t junction = slot.extra[0];
+         uint32_t cathode = device.nets[1];
+         if (pDiode->seriesResistanceOhm > 0.0)
+         {
+            Result series = StampResistor(pSystem, anode, junction, pDiode->seriesResistanceOhm);
+            if (IsErr(series))
+            {
+               return series;
+            }
+         }
+         double junctionVoltage = VoltageBetween(operating, junction, cathode);
+         DiodeLinearization linear = EvaluateDiode(*pDiode, junctionVoltage);
+         double equivalent = linear.currentAmpere - (linear.conductanceSiemens * junctionVoltage);
+         StampConductance(pSystem, junction, cathode, linear.conductanceSiemens + gminSiemens);
+         StampInjection(pSystem, junction, -equivalent);
+         StampInjection(pSystem, cathode, equivalent);
+      }
+      else if (device.kind == ComponentKind::Npn || device.kind == ComponentKind::Pnp)
+      {
+         const BjtProperties* pBjt = std::get_if<BjtProperties>(&device.properties);
+         if (pBjt == nullptr || device.pinCount < 3)
+         {
+            if (pMessage != nullptr)
+            {
+               *pMessage = device.name + " is missing a junction model.";
+            }
+            return Result::InvalidParameter;
+         }
+         double base = NodeVoltage(operating, device.nets[1]);
+         double collector = NodeVoltage(operating, device.nets[0]);
+         double emitter = NodeVoltage(operating, device.nets[2]);
+         BjtLinearization linear = EvaluateBjt(*pBjt, base - emitter, base - collector);
+         double baseEmitter = base - emitter;
+         double baseCollector = base - collector;
+         double baseEquivalent = linear.baseCurrent - (linear.baseEmitterConductance * baseEmitter) - (linear.baseCollectorConductance * baseCollector);
+         double collectorEquivalent = linear.collectorCurrent - (linear.collectorEmitterTransconductance * baseEmitter) - (linear.collectorCollectorConductance * baseCollector);
+         StampConductance(pSystem, device.nets[1], device.nets[2], linear.baseEmitterConductance);
+         StampConductance(pSystem, device.nets[1], device.nets[0], linear.baseCollectorConductance);
+         AddControlled(pSystem, device.nets[0], device.nets[1], device.nets[2], linear.collectorEmitterTransconductance);
+         AddControlled(pSystem, device.nets[0], device.nets[1], device.nets[0], linear.collectorCollectorConductance);
+         AddControlled(pSystem, device.nets[2], device.nets[1], device.nets[2], -linear.collectorEmitterTransconductance);
+         AddControlled(pSystem, device.nets[2], device.nets[1], device.nets[0], -linear.collectorCollectorConductance);
+         StampInjection(pSystem, device.nets[1], -baseEquivalent);
+         StampInjection(pSystem, device.nets[0], -collectorEquivalent);
+         StampInjection(pSystem, device.nets[2], baseEquivalent + collectorEquivalent);
+      }
+      else if (device.kind == ComponentKind::Nmos || device.kind == ComponentKind::Pmos)
+      {
+         const MosfetProperties* pMosfet = std::get_if<MosfetProperties>(&device.properties);
+         if (pMosfet == nullptr || device.pinCount < 3)
+         {
+            if (pMessage != nullptr)
+            {
+               *pMessage = device.name + " is missing a junction model.";
+            }
+            return Result::InvalidParameter;
+         }
+         double gate = NodeVoltage(operating, device.nets[1]);
+         double drain = NodeVoltage(operating, device.nets[0]);
+         double source = NodeVoltage(operating, device.nets[2]);
+         MosfetLinearization linear = EvaluateMosfet(device.kind, *pMosfet, gate - source, drain - source);
+         double gateSource = gate - source;
+         double drainSource = drain - source;
+         double equivalent = linear.drainCurrent - (linear.gateSourceTransconductance * gateSource) - (linear.drainSourceConductance * drainSource);
+         AddGain(pSystem, device.nets[0], device.nets[1], linear.gateSourceTransconductance);
+         AddGain(pSystem, device.nets[0], device.nets[2], -linear.gateSourceTransconductance - linear.drainSourceConductance);
+         AddGain(pSystem, device.nets[0], device.nets[0], linear.drainSourceConductance);
+         AddGain(pSystem, device.nets[2], device.nets[1], -linear.gateSourceTransconductance);
+         AddGain(pSystem, device.nets[2], device.nets[2], linear.gateSourceTransconductance + linear.drainSourceConductance);
+         AddGain(pSystem, device.nets[2], device.nets[0], -linear.drainSourceConductance);
+         StampInjection(pSystem, device.nets[0], -equivalent);
+         StampInjection(pSystem, device.nets[2], equivalent);
+      }
+   }
+   return Result::Ok;
+}
+
+Result StampTransientLinear(DenseSystem<double>* pSystem, const Netlist& netlist, const PreparedCircuit& prepared, const AnalysisSettings& settings, const VoltageList& acceptedVoltage, const std::vector<double>& inductorCurrent, const std::vector<uint8_t>& trialLevel, double timeSec, double stepSec, uint32_t acceptedSteps, std::string* pMessage)
+{
+   if (pSystem == nullptr)
+   {
+      return Result::InvalidParameter;
+   }
+   for (size_t index = 0; index < netlist.devices.size() && index < prepared.devices.size(); index += 1)
+   {
+      const NetlistDevice& device = netlist.devices[index];
+      const SolverDevice& slot = prepared.devices[index];
+      if (device.kind == ComponentKind::VoltageSource)
+      {
+         const VoltageSourceProperties* pSource = std::get_if<VoltageSourceProperties>(&device.properties);
+         if (pSource == nullptr || slot.branch == NoBranch)
+         {
+            return Result::InvalidParameter;
+         }
+         uint32_t branchUnknown = (prepared.totalNets - 1) + slot.branch;
+         StampVoltageSource(pSystem, device.nets[1], device.nets[0], branchUnknown, SourceVoltageAt(*pSource, timeSec + stepSec, true));
+      }
+      else if (device.kind == ComponentKind::CurrentSource)
+      {
+         const CurrentSourceProperties* pSource = std::get_if<CurrentSourceProperties>(&device.properties);
+         if (pSource == nullptr)
+         {
+            return Result::InvalidParameter;
+         }
+         double current = SourceCurrentAt(*pSource, timeSec + stepSec, true);
+         StampInjection(pSystem, device.nets[0], -current);
+         StampInjection(pSystem, device.nets[1], current);
+      }
+      else if (device.kind == ComponentKind::Resistor)
+      {
+         const ResistorProperties* pResistor = std::get_if<ResistorProperties>(&device.properties);
+         if (pResistor == nullptr)
+         {
+            return Result::InvalidParameter;
+         }
+         Result stamped = StampResistor(pSystem, device.nets[0], device.nets[1], pResistor->resistanceOhm);
+         if (IsErr(stamped))
+         {
+            return stamped;
+         }
+      }
+      else if (device.kind == ComponentKind::Capacitor)
+      {
+         const CapacitorProperties* pCapacitor = std::get_if<CapacitorProperties>(&device.properties);
+         if (pCapacitor == nullptr)
+         {
+            return Result::InvalidParameter;
+         }
+         double previous = VoltageBetween(acceptedVoltage, device.nets[0], device.nets[1]);
+         if (acceptedSteps == 0 && settings.initialConditions == InitialConditionMode::ComponentValues)
+         {
+            previous = pCapacitor->initialVoltageVolt;
+         }
+         double equivalentConductance = pCapacitor->capacitanceFarad / stepSec;
+         double historyCurrent = 0.0;
+         if (settings.integration == IntegrationMethod::Trapezoidal)
+         {
+            equivalentConductance *= 2.0;
+            if (index < inductorCurrent.size())
+            {
+               historyCurrent = inductorCurrent[index];
+            }
+         }
+         StampConductance(pSystem, device.nets[0], device.nets[1], equivalentConductance);
+         StampInjection(pSystem, device.nets[0], (equivalentConductance * previous) + historyCurrent);
+         StampInjection(pSystem, device.nets[1], -((equivalentConductance * previous) + historyCurrent));
+      }
+      else if (device.kind == ComponentKind::Inductor)
+      {
+         const InductorProperties* pInductor = std::get_if<InductorProperties>(&device.properties);
+         if (pInductor == nullptr)
+         {
+            return Result::InvalidParameter;
+         }
+         double equivalentConductance = stepSec / pInductor->inductanceHenry;
+         if (settings.integration == IntegrationMethod::Trapezoidal)
+         {
+            equivalentConductance *= 2.0;
+         }
+         double historyCurrent = index < inductorCurrent.size() ? inductorCurrent[index] : 0.0;
+         StampConductance(pSystem, device.nets[0], device.nets[1], equivalentConductance);
+         StampInjection(pSystem, device.nets[0], -historyCurrent);
+         StampInjection(pSystem, device.nets[1], historyCurrent);
+      }
+      else if (device.kind == ComponentKind::SpdtSwitch)
+      {
+         Result stamped = StampSpdt(pSystem, device, slot, prepared.totalNets);
+         if (IsErr(stamped))
+         {
+            if (pMessage != nullptr)
+            {
+               *pMessage = device.name + " has an invalid contact.";
+            }
+            return stamped;
+         }
+      }
+      else if (device.kind == ComponentKind::DipSwitch)
+      {
+         Result stamped = StampDip(pSystem, device, slot, prepared.totalNets);
+         if (IsErr(stamped))
+         {
+            if (pMessage != nullptr)
+            {
+               *pMessage = device.name + " has an invalid contact.";
+            }
+            return stamped;
+         }
+      }
+      else if (device.kind == ComponentKind::Timer555)
+      {
+         uint8_t level = index < trialLevel.size() ? trialLevel[index] : TimerOutputLow;
+         Result stamped = StampTimerRails(pSystem, device, level);
+         if (IsErr(stamped))
+         {
+            if (pMessage != nullptr)
+            {
+               *pMessage = device.name + " has an invalid output resistance.";
+            }
+            return stamped;
+         }
+      }
+   }
+   return Result::Ok;
+}
+
+} // namespace
+
+TransientResult SolveTransientAnalog(const Netlist& netlist, const AnalysisSettings& settings, CancelToken* pCancel, const LogicDriveList* pDrives, double horizonSec, TransientContinuity* pContinuity)
 {
    TransientResult result = {};
    if (settings.stopTimeSec <= 0.0 || settings.maximumStepSec <= 0.0)
@@ -1713,46 +2036,70 @@ TransientResult SolveTransientAnalog(const Netlist& netlist, const AnalysisSetti
       result.message = Describe(Result::InvalidTimeStep);
       return result;
    }
-   AnalysisSettings biasSettings = settings;
-   result.initial = SolveDcAnalog(netlist, biasSettings, pCancel);
-   if (IsErr(result.initial.code))
+   double horizon = settings.stopTimeSec;
+   if (horizonSec > 0.0 && horizonSec < horizon)
    {
-      result.code = result.initial.code;
-      result.message = result.initial.message;
-      return result;
+      horizon = horizonSec;
    }
-   VoltageList voltage = result.initial.netVoltage;
-   if (voltage.size() < netlist.netCount)
-   {
-      voltage.assign(netlist.netCount, 0.0);
-   }
+   VoltageList voltage(netlist.netCount, 0.0);
    std::vector<double> inductorCurrent(netlist.devices.size(), 0.0);
    std::vector<uint8_t> timerLevel(netlist.devices.size(), TimerOutputLow);
    std::vector<double> timerChangeAt(netlist.devices.size(), TimerNoSchedule);
-   if (result.initial.deviceState.size() == netlist.devices.size())
-   {
-      timerLevel = result.initial.deviceState;
-   }
-   if (settings.initialConditions == InitialConditionMode::ComponentValues)
-   {
-      for (size_t index = 0; index < netlist.devices.size(); index += 1)
-      {
-         const NetlistDevice& device = netlist.devices[index];
-         if (device.kind == ComponentKind::Inductor)
-         {
-            const InductorProperties* pInductor = std::get_if<InductorProperties>(&device.properties);
-            if (pInductor != nullptr)
-            {
-               inductorCurrent[index] = pInductor->initialCurrentAmpere;
-            }
-         }
-      }
-   }
-   RecordSample(&result, voltage, netlist.netCount, 0.0);
    double timeSec = 0.0;
    double stepSec = settings.maximumStepSec;
    uint32_t accepted = 0;
-   while (timeSec < settings.stopTimeSec && accepted < MaxTransientSteps)
+   bool continueSlice = pContinuity != nullptr && pContinuity->ready;
+   if (continueSlice)
+   {
+      timeSec = pContinuity->timeSec;
+      stepSec = pContinuity->stepSec > 0.0 ? pContinuity->stepSec : settings.maximumStepSec;
+      accepted = pContinuity->acceptedSteps;
+      voltage = pContinuity->voltage;
+      inductorCurrent = pContinuity->inductorCurrent;
+      timerLevel = pContinuity->timerLevel;
+      timerChangeAt = pContinuity->timerChangeAt;
+      if (voltage.size() < netlist.netCount)
+      {
+         voltage.resize(netlist.netCount, 0.0);
+      }
+   }
+   else
+   {
+      AnalysisSettings biasSettings = settings;
+      result.initial = SolveDcAnalog(netlist, biasSettings, pCancel, pDrives);
+      if (IsErr(result.initial.code))
+      {
+         result.code = result.initial.code;
+         result.message = result.initial.message;
+         return result;
+      }
+      voltage = result.initial.netVoltage;
+      if (voltage.size() < netlist.netCount)
+      {
+         voltage.assign(netlist.netCount, 0.0);
+      }
+      if (result.initial.deviceState.size() == netlist.devices.size())
+      {
+         timerLevel = result.initial.deviceState;
+      }
+      if (settings.initialConditions == InitialConditionMode::ComponentValues)
+      {
+         for (size_t index = 0; index < netlist.devices.size(); index += 1)
+         {
+            const NetlistDevice& device = netlist.devices[index];
+            if (device.kind == ComponentKind::Inductor)
+            {
+               const InductorProperties* pInductor = std::get_if<InductorProperties>(&device.properties);
+               if (pInductor != nullptr)
+               {
+                  inductorCurrent[index] = pInductor->initialCurrentAmpere;
+               }
+            }
+         }
+      }
+      RecordSample(&result, voltage, netlist.netCount, 0.0);
+   }
+   while (timeSec < horizon && accepted < MaxTransientSteps)
    {
       if (pCancel != nullptr && pCancel->IsRequested())
       {
@@ -1760,9 +2107,9 @@ TransientResult SolveTransientAnalog(const Netlist& netlist, const AnalysisSetti
          result.message = "Cancelled.";
          return result;
       }
-      if (timeSec + stepSec > settings.stopTimeSec)
+      if (timeSec + stepSec > horizon)
       {
-         stepSec = settings.stopTimeSec - timeSec;
+         stepSec = horizon - timeSec;
       }
       PreparedCircuit prepared = Prepare(netlist, false);
       if (IsErr(prepared.code))
@@ -1772,9 +2119,6 @@ TransientResult SolveTransientAnalog(const Netlist& netlist, const AnalysisSetti
          return result;
       }
       uint32_t unknownCount = UnknownCountOf(prepared);
-      DenseSystem<double> system;
-      system.Reset(unknownCount);
-      StampGmin(&system, std::max(prepared.totalNets, netlist.netCount), settings.gminSiemens);
       std::vector<uint8_t> trialLevel = timerLevel;
       std::vector<double> trialChangeAt = timerChangeAt;
       for (size_t index = 0; index < netlist.devices.size(); index += 1)
@@ -1784,138 +2128,80 @@ TransientResult SolveTransientAnalog(const Netlist& netlist, const AnalysisSetti
             ScheduleTimer(netlist.devices[index], voltage, timeSec, stepSec, &trialLevel[index], &trialChangeAt[index]);
          }
       }
-      for (size_t index = 0; index < netlist.devices.size(); index += 1)
+      bool junctionCircuit = HasJunctionDevice(netlist);
+      VoltageList operating(prepared.totalNets, 0.0);
+      auto storedNetCount = static_cast<uint32_t>(voltage.size());
+      for (uint32_t net = 0; net < prepared.totalNets && net < storedNetCount; net += 1)
       {
-         const NetlistDevice& device = netlist.devices[index];
-         const SolverDevice& slot = prepared.devices[index];
-         if (device.kind == ComponentKind::VoltageSource)
-         {
-            const VoltageSourceProperties* pSource = std::get_if<VoltageSourceProperties>(&device.properties);
-            if (pSource == nullptr || slot.branch == NoBranch)
-            {
-               result.code = Result::InvalidParameter;
-               return result;
-            }
-            uint32_t branchUnknown = (prepared.totalNets - 1) + slot.branch;
-            StampVoltageSource(&system, device.nets[1], device.nets[0], branchUnknown, SourceVoltageAt(*pSource, timeSec + stepSec, true));
-         }
-         else if (device.kind == ComponentKind::CurrentSource)
-         {
-            const CurrentSourceProperties* pSource = std::get_if<CurrentSourceProperties>(&device.properties);
-            if (pSource == nullptr)
-            {
-               result.code = Result::InvalidParameter;
-               return result;
-            }
-            double current = SourceCurrentAt(*pSource, timeSec + stepSec, true);
-            StampInjection(&system, device.nets[0], -current);
-            StampInjection(&system, device.nets[1], current);
-         }
-         else if (device.kind == ComponentKind::Resistor)
-         {
-            const ResistorProperties* pResistor = std::get_if<ResistorProperties>(&device.properties);
-            if (pResistor == nullptr)
-            {
-               result.code = Result::InvalidParameter;
-               return result;
-            }
-            Result stamped = StampResistor(&system, device.nets[0], device.nets[1], pResistor->resistanceOhm);
-            if (IsErr(stamped))
-            {
-               result.code = stamped;
-               return result;
-            }
-         }
-         else if (device.kind == ComponentKind::Capacitor)
-         {
-            const CapacitorProperties* pCapacitor = std::get_if<CapacitorProperties>(&device.properties);
-            if (pCapacitor == nullptr)
-            {
-               result.code = Result::InvalidParameter;
-               return result;
-            }
-            double previous = VoltageBetween(voltage, device.nets[0], device.nets[1]);
-            if (accepted == 0 && settings.initialConditions == InitialConditionMode::ComponentValues)
-            {
-               previous = pCapacitor->initialVoltageVolt;
-            }
-            double geq = pCapacitor->capacitanceFarad / stepSec;
-            double historyCurrent = 0.0;
-            if (settings.integration == IntegrationMethod::Trapezoidal)
-            {
-               geq *= 2.0;
-               historyCurrent = inductorCurrent[index];
-            }
-            StampConductance(&system, device.nets[0], device.nets[1], geq);
-            StampInjection(&system, device.nets[0], (geq * previous) + historyCurrent);
-            StampInjection(&system, device.nets[1], -((geq * previous) + historyCurrent));
-         }
-         else if (device.kind == ComponentKind::Inductor)
-         {
-            const InductorProperties* pInductor = std::get_if<InductorProperties>(&device.properties);
-            if (pInductor == nullptr)
-            {
-               result.code = Result::InvalidParameter;
-               return result;
-            }
-            double geq = stepSec / pInductor->inductanceHenry;
-            if (settings.integration == IntegrationMethod::Trapezoidal)
-            {
-               geq *= 2.0;
-            }
-            StampConductance(&system, device.nets[0], device.nets[1], geq);
-            StampInjection(&system, device.nets[0], -inductorCurrent[index]);
-            StampInjection(&system, device.nets[1], inductorCurrent[index]);
-         }
-         else if (device.kind == ComponentKind::SpdtSwitch)
-         {
-            Result stamped = StampSpdt(&system, device, slot, prepared.totalNets);
-            if (IsErr(stamped))
-            {
-               result.code = stamped;
-               result.message = device.name + " has an invalid contact.";
-               return result;
-            }
-         }
-         else if (device.kind == ComponentKind::DipSwitch)
-         {
-            Result stamped = StampDip(&system, device, slot, prepared.totalNets);
-            if (IsErr(stamped))
-            {
-               result.code = stamped;
-               result.message = device.name + " has an invalid contact.";
-               return result;
-            }
-         }
-         else if (device.kind == ComponentKind::Timer555)
-         {
-            Result stamped = StampTimerRails(&system, device, trialLevel[index]);
-            if (IsErr(stamped))
-            {
-               result.code = stamped;
-               result.message = device.name + " has an invalid output resistance.";
-               return result;
-            }
-         }
+         operating[net] = voltage[net];
       }
-      if (unknownCount > 0)
+      bool converged = unknownCount == 0;
+      std::string stampMessage;
+      for (uint32_t iteration = 0; iteration < MaxNewtonIterations && converged == false; iteration += 1)
       {
+         DenseSystem<double> system;
+         system.Reset(unknownCount);
+         StampGmin(&system, std::max(prepared.totalNets, netlist.netCount), settings.gminSiemens);
+         Result linear = StampTransientLinear(&system, netlist, prepared, settings, voltage, inductorCurrent, trialLevel, timeSec, stepSec, accepted, &stampMessage);
+         if (IsErr(linear))
+         {
+            result.code = linear;
+            result.message = stampMessage.empty() ? Describe(linear) : stampMessage;
+            return result;
+         }
+         Result junctions = StampJunctionDevices(&system, netlist, prepared, operating, settings.gminSiemens, &stampMessage);
+         if (IsErr(junctions))
+         {
+            result.code = junctions;
+            result.message = stampMessage.empty() ? Describe(junctions) : stampMessage;
+            return result;
+         }
+         Result drivesStamped = StampLogicDrives(&system, pDrives, DriveStamp::DcNorton);
+         if (IsErr(drivesStamped))
+         {
+            result.code = drivesStamped;
+            result.message = Describe(drivesStamped);
+            return result;
+         }
          Result solved = system.FactorizeAndSolve();
          if (IsErr(solved))
          {
-            stepSec *= 0.5;
-            if (stepSec < settings.maximumStepSec * 1.0e-6)
-            {
-               result.code = Result::NoConvergence;
-               result.message = Describe(Result::NoConvergence);
-               return result;
-            }
-            continue;
+            converged = false;
+            break;
          }
-         for (uint32_t net = 1; net < netlist.netCount; net += 1)
+         VoltageList proposed(prepared.totalNets, 0.0);
+         for (uint32_t net = 1; net < prepared.totalNets; net += 1)
          {
-            voltage[net] = system.Solution(net - 1);
+            proposed[net] = system.Solution(net - 1);
          }
+         double alpha = 1.0;
+         LimitTransientJunctions(netlist, prepared, operating, proposed, &alpha);
+         double maxChange = 0.0;
+         for (uint32_t net = 1; net < prepared.totalNets; net += 1)
+         {
+            double updated = operating[net] + (alpha * (proposed[net] - operating[net]));
+            maxChange = std::max(maxChange, std::abs(updated - operating[net]));
+            operating[net] = updated;
+         }
+         if (junctionCircuit == false || (alpha > 0.999 && maxChange <= (VoltageAbsoluteTolerance + VoltageRelativeTolerance)))
+         {
+            converged = true;
+         }
+      }
+      if (converged == false)
+      {
+         stepSec *= 0.5;
+         if (stepSec < settings.maximumStepSec * 1.0e-6)
+         {
+            result.code = Result::NoConvergence;
+            result.message = Describe(Result::NoConvergence);
+            return result;
+         }
+         continue;
+      }
+      for (uint32_t net = 1; net < netlist.netCount && net < storedNetCount; net += 1)
+      {
+         voltage[net] = operating[net];
       }
       timerLevel = trialLevel;
       timerChangeAt = trialChangeAt;
@@ -1953,6 +2239,17 @@ TransientResult SolveTransientAnalog(const Netlist& netlist, const AnalysisSetti
       if (stepSec < settings.maximumStepSec)
       {
          stepSec = std::min(settings.maximumStepSec, stepSec * 1.2);
+      }
+      if (pContinuity != nullptr)
+      {
+         pContinuity->timeSec = timeSec;
+         pContinuity->stepSec = stepSec;
+         pContinuity->voltage = voltage;
+         pContinuity->inductorCurrent = inductorCurrent;
+         pContinuity->timerLevel = timerLevel;
+         pContinuity->timerChangeAt = timerChangeAt;
+         pContinuity->acceptedSteps = accepted;
+         pContinuity->ready = true;
       }
    }
    result.code = Result::Ok;

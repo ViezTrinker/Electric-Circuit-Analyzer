@@ -1,0 +1,247 @@
+{
+   "components": [
+      {
+         "id": 1,
+         "kind": "ground",
+         "name": "GND1",
+         "properties": {},
+         "rotation": 0,
+         "x": 0,
+         "y": -2
+      },
+      {
+         "id": 2,
+         "kind": "ground",
+         "name": "GND2",
+         "properties": {},
+         "rotation": 0,
+         "x": 0,
+         "y": 2
+      },
+      {
+         "id": 3,
+         "kind": "ground",
+         "name": "GND3",
+         "properties": {},
+         "rotation": 0,
+         "x": 6,
+         "y": 2
+      },
+      {
+         "id": 4,
+         "kind": "voltageSource",
+         "name": "V1",
+         "properties": {
+            "acAmplitudeVolt": 0.0,
+            "acPhaseDeg": 0.0,
+            "dcVoltageVolt": 5.0,
+            "pulseDelaySec": 0.0,
+            "pulseFallSec": 1e-09,
+            "pulseInitial": 0.0,
+            "pulseLevel": 5.0,
+            "pulsePeriodSec": 0.001,
+            "pulseRiseSec": 1e-09,
+            "pulseWidthSec": 0.0005,
+            "sineAmplitude": 5.0,
+            "sineDelaySec": 0.0,
+            "sineFrequencyHz": 1000.0,
+            "sineOffset": 0.0,
+            "sinePhaseDeg": 0.0,
+            "transientWaveform": 0
+         },
+         "rotation": 90,
+         "x": 0,
+         "y": -2
+      },
+      {
+         "id": 5,
+         "kind": "timer555",
+         "name": "U1",
+         "properties": {
+            "outputResistanceOhm": 1.0,
+            "propagationDelaySec": 0.0
+         },
+         "rotation": 0,
+         "x": 0,
+         "y": 0
+      },
+      {
+         "id": 6,
+         "kind": "resistor",
+         "name": "R1",
+         "properties": {
+            "resistanceOhm": 10000.0
+         },
+         "rotation": 0,
+         "x": 2,
+         "y": 0
+      },
+      {
+         "id": 7,
+         "kind": "resistor",
+         "name": "R2",
+         "properties": {
+            "resistanceOhm": 10000.0
+         },
+         "rotation": 90,
+         "x": 8,
+         "y": 6
+      },
+      {
+         "id": 8,
+         "kind": "capacitor",
+         "name": "C1",
+         "properties": {
+            "capacitanceFarad": 1e-07,
+            "esrOhm": 0.0,
+            "initialVoltageVolt": 0.0
+         },
+         "rotation": 90,
+         "x": 0,
+         "y": 2
+      },
+      {
+         "id": 9,
+         "kind": "resistor",
+         "name": "R3",
+         "properties": {
+            "resistanceOhm": 10000.0
+         },
+         "rotation": 0,
+         "x": 4,
+         "y": 2
+      }
+   ],
+   "format": "electric-circuit-analyzer",
+   "labels": [],
+   "name": "555 astable",
+   "settings": {
+      "gminSiemens": 1e-12,
+      "initialConditions": 0,
+      "integration": 0,
+      "kind": 2,
+      "linearPointCount": 50,
+      "maximumStepSec": 5e-06,
+      "pointsPerDecade": 20,
+      "stopTimeSec": 0.008,
+      "sweepScale": 0,
+      "sweepStartHz": 10.0,
+      "sweepStopHz": 1000000.0,
+      "updateDcOnEdit": 1
+   },
+   "version": 1,
+   "wires": [
+      {
+         "id": 10,
+         "name": "",
+         "points": [
+            {
+               "x": 0,
+               "y": 0
+            },
+            {
+               "x": 2,
+               "y": 0
+            }
+         ]
+      },
+      {
+         "id": 11,
+         "name": "",
+         "points": [
+            {
+               "x": 4,
+               "y": 0
+            },
+            {
+               "x": 8,
+               "y": 0
+            }
+         ]
+      },
+      {
+         "id": 12,
+         "name": "",
+         "points": [
+            {
+               "x": 8,
+               "y": 0
+            },
+            {
+               "x": 8,
+               "y": 6
+            }
+         ]
+      },
+      {
+         "id": 13,
+         "name": "",
+         "points": [
+            {
+               "x": 8,
+               "y": 8
+            },
+            {
+               "x": 0,
+               "y": 8
+            }
+         ]
+      },
+      {
+         "id": 14,
+         "name": "",
+         "points": [
+            {
+               "x": 0,
+               "y": 8
+            },
+            {
+               "x": 0,
+               "y": 6
+            }
+         ]
+      },
+      {
+         "id": 15,
+         "name": "",
+         "points": [
+            {
+               "x": 0,
+               "y": 4
+            },
+            {
+               "x": 0,
+               "y": 6
+            }
+         ]
+      },
+      {
+         "id": 16,
+         "name": "",
+         "points": [
+            {
+               "x": 4,
+               "y": 4
+            },
+            {
+               "x": 2,
+               "y": 4
+            }
+         ]
+      },
+      {
+         "id": 17,
+         "name": "",
+         "points": [
+            {
+               "x": 2,
+               "y": 4
+            },
+            {
+               "x": 2,
+               "y": 0
+            }
+         ]
+      }
+   ]
+}

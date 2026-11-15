@@ -222,6 +222,13 @@ void TestNandXor(void)
    Analyzer::DcResult floatingResult = Analyzer::SolveDc(floating, nullptr);
    Expect(Analyzer::IsOk(floatingResult.code), floatingResult.message);
    ExpectLevel(DcLevel(floating, floatingResult, floatingNand, 2), Analyzer::LogicLevel::Conflict, "floating nand input");
+
+   Analyzer::Circuit forced;
+   uint64_t forcedNand = Place(&forced, Analyzer::ComponentKind::NandGate, 0, 0);
+   PullOn(&forced, Analyzer::ComponentKind::PullDown, forcedNand, 0);
+   Analyzer::DcResult forcedResult = Analyzer::SolveDc(forced, nullptr);
+   Expect(Analyzer::IsOk(forcedResult.code), forcedResult.message);
+   ExpectLevel(DcLevel(forced, forcedResult, forcedNand, 2), Analyzer::LogicLevel::High, "nand low input forces high");
 }
 
 void TestTriStateAndOpenDrain(void)
