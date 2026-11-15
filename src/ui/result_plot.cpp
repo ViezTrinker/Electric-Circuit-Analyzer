@@ -1,6 +1,6 @@
 /*!
  * \file result_plot.cpp
- * \brief Paints DC bars, Bode curves, time curves, and a spectrum.
+ * \brief Paints DC bars, Bode curves, time curves, a spectrum, and a timing diagram.
  */
 
 #include "result_plot.h"
@@ -10,6 +10,7 @@
 #include <cmath>
 
 #include <QFontMetrics>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 
@@ -131,6 +132,59 @@ double MapAlong(double value, const AxisRange& range, bool logarithmic, double s
       fraction = 1.0;
    }
    return start + (fraction * length);
+}
+
+double UnmapAlong(double pixel, const AxisRange& range, bool logarithmic, double start, double length)
+{
+   double fraction = 0.0;
+   if (length > 0.0)
+   {
+      fraction = (pixel - start) / length;
+   }
+   if (fraction < 0.0)
+   {
+      fraction = 0.0;
+   }
+   if (fraction > 1.0)
+   {
+      fraction = 1.0;
+   }
+   if (logarithmic && range.minimum > 0.0 && range.maximum > range.minimum)
+   {
+      const double logStart = std::log10(range.minimum);
+      const double logStop = std::log10(range.maximum);
+      return std::pow(10.0, logStart + (fraction * (logStop - logStart)));
+   }
+   return range.minimum + (fraction * (range.maximum - range.minimum));
+}
+
+void DrawCurve(QPainter* pPainter, const PlotSampleList& samples, const AxisRange& xRange, const AxisRange& yRange, bool logarithmic, const QRect& area, const QColor& color);
+
+void DrawTiming(QPainter* pPainter, const QRect& area, const PlotSeriesList& series)
+{
+   if (pPainter == nullptr || series.empty() || area.height() <= 0)
+   {
+      return;
+   }
+   AxisRange xRange = RangeOf(series, false);
+   if (xRange.maximum <= xRange.minimum)
+   {
+      xRange.maximum = xRange.minimum + 1.0;
+   }
+   const int bandCount = static_cast<int>(series.size());
+   const int bandHeight = std::max(18, area.height() / bandCount);
+   constexpr double LogicTop = 3.0;
+   AxisRange yRange{-0.25, LogicTop + 0.25};
+   int row = 0;
+   for (const PlotSeries& seriesItem : series)
+   {
+      QRect band(area.left(), area.top() + (row * bandHeight), area.width(), bandHeight);
+      pPainter->setPen(SeriesColors[row % SeriesColorCount]);
+      pPainter->drawText(QRect(band.left(), band.top(), 72, band.height()), Qt::AlignVCenter | Qt::AlignLeft, QString::fromStdString(seriesItem.name));
+      QRect trace(band.left() + 76, band.top() + 2, std::max(8, band.width() - 80), std::max(8, band.height() - 4));
+      DrawCurve(pPainter, seriesItem.samples, xRange, yRange, false, trace, SeriesColors[row % SeriesColorCount]);
+      row += 1;
+   }
 }
 
 QString AxisText(double value)
@@ -298,9 +352,16 @@ void DrawSeries(QPainter* pPainter, const QRect& area, const PlotSeriesList& ser
 ResultPlot::ResultPlot(QWidget* pParent)
    : QWidget(pParent)
    , _kind(PlotKind::Empty)
+   , _hasCursor(false)
+   , _cursorX(0.0)
+   , _axisArea()
+   , _axisMinimum(0.0)
+   , _axisMaximum(1.0)
+   , _axisScale(AxisScale::Linear)
 {
    setMinimumSize(MinimumDiagramWidthPx, MinimumDiagramHeightPx);
    setAutoFillBackground(true);
+   setMouseTracking(false);
 }
 
 void ResultPlot::ShowDc(const NodeValueList& nodes)
@@ -309,7 +370,9 @@ void ResultPlot::ShowDc(const NodeValueList& nodes)
    _title = "Node voltages";
    _nodes = nodes;
    _series.clear();
+   _lower.clear();
    _spectrum.clear();
+   _hasCursor = false;
    update();
 }
 
@@ -319,7 +382,9 @@ void ResultPlot::ShowSeries(PlotKind kind, std::string_view title, const PlotSer
    _title = std::string(title);
    _nodes.clear();
    _series = series;
+   _lower.clear();
    _spectrum.clear();
+   _hasCursor = false;
    update();
 }
 
@@ -329,7 +394,21 @@ void ResultPlot::ShowTime(const PlotSeriesList& time, const PlotSeriesList& spec
    _title = "Time";
    _nodes.clear();
    _series = time;
+   _lower.clear();
    _spectrum = spectrum;
+   _hasCursor = false;
+   update();
+}
+
+void ResultPlot::ShowTiming(const PlotSeriesList& logic, const PlotSeriesList& analog)
+{
+   _kind = PlotKind::Timing;
+   _title = "Timing";
+   _nodes.clear();
+   _series = logic;
+   _lower = analog;
+   _spectrum.clear();
+   _hasCursor = false;
    update();
 }
 
@@ -339,8 +418,25 @@ void ResultPlot::Clear(void)
    _title.clear();
    _nodes.clear();
    _series.clear();
+   _lower.clear();
    _spectrum.clear();
+   _hasCursor = false;
    update();
+}
+
+void ResultPlot::SetCursor(double position)
+{
+   _cursorX = position;
+   _hasCursor = std::isfinite(position);
+   update();
+}
+
+void ResultPlot::RememberAxis(const QRect& area, double minimum, double maximum, AxisScale scale)
+{
+   _axisArea = area;
+   _axisMinimum = minimum;
+   _axisMaximum = maximum;
+   _axisScale = scale;
 }
 
 void ResultPlot::paintEvent(QPaintEvent* pEvent)
@@ -370,9 +466,40 @@ void ResultPlot::paintEvent(QPaintEvent* pEvent)
       const int half = std::max(40, (height() - 48) / 2);
       QRect magnitude(PlotMarginLeftPx, TitleHeightPx + 8, width() - PlotMarginLeftPx - PlotMarginOtherPx, half - TitleHeightPx);
       QRect phase(PlotMarginLeftPx, magnitude.bottom() + TitleHeightPx + 12, magnitude.width(), half - TitleHeightPx);
+      AxisRange frequency = RangeOf(_series, false);
+      if (frequency.maximum <= frequency.minimum)
+      {
+         frequency.maximum = frequency.minimum + 1.0;
+      }
+      if (frequency.minimum <= 0.0)
+      {
+         frequency.minimum = LogFloor;
+      }
+      RememberAxis(magnitude, frequency.minimum, frequency.maximum, AxisScale::Logarithmic);
       DrawSeries(&painter, magnitude, _series, false, "Magnitude (dB)", true);
       DrawSeries(&painter, phase, _series, true, "Phase (deg)", true);
       DrawLegend(&painter, _series, PlotMarginLeftPx, 2);
+      DrawCursor(&painter);
+      return;
+   }
+   if (_kind == PlotKind::Timing)
+   {
+      const bool split = _lower.empty() == false;
+      const int timingHeight = split ? std::max(40, (height() - 48) / 2) : (height() - TitleHeightPx - 36);
+      QRect timingArea(PlotMarginLeftPx, TitleHeightPx + 8, width() - PlotMarginLeftPx - PlotMarginOtherPx, timingHeight);
+      AxisRange timeRange = RangeOf(_series, false);
+      if (timeRange.maximum <= timeRange.minimum)
+      {
+         timeRange.maximum = timeRange.minimum + 1.0;
+      }
+      RememberAxis(timingArea, timeRange.minimum, timeRange.maximum, AxisScale::Linear);
+      DrawTiming(&painter, timingArea, _series);
+      if (split)
+      {
+         QRect analogArea(PlotMarginLeftPx, timingArea.bottom() + TitleHeightPx + 12, timingArea.width(), timingHeight);
+         DrawSeries(&painter, analogArea, _lower, false, "Time", false);
+      }
+      DrawCursor(&painter);
       return;
    }
    if (_kind == PlotKind::Time && _spectrum.empty() == false)
@@ -380,9 +507,16 @@ void ResultPlot::paintEvent(QPaintEvent* pEvent)
       const int half = std::max(40, (height() - 48) / 2);
       QRect timeArea(PlotMarginLeftPx, TitleHeightPx + 8, width() - PlotMarginLeftPx - PlotMarginOtherPx, half - TitleHeightPx);
       QRect spectrumArea(PlotMarginLeftPx, timeArea.bottom() + TitleHeightPx + 12, timeArea.width(), half - TitleHeightPx);
+      AxisRange timeRange = RangeOf(_series, false);
+      if (timeRange.maximum <= timeRange.minimum)
+      {
+         timeRange.maximum = timeRange.minimum + 1.0;
+      }
+      RememberAxis(timeArea, timeRange.minimum, timeRange.maximum, AxisScale::Linear);
       DrawSeries(&painter, timeArea, _series, false, "Time", false);
       DrawSeries(&painter, spectrumArea, _spectrum, false, "Spectrum", UseLogAxis(RangeOf(_spectrum, false)));
       DrawLegend(&painter, _series, PlotMarginLeftPx, 2);
+      DrawCursor(&painter);
       return;
    }
    QRect area(PlotMarginLeftPx, TitleHeightPx + 8, width() - PlotMarginLeftPx - PlotMarginOtherPx, height() - TitleHeightPx - 36);
@@ -391,8 +525,45 @@ void ResultPlot::paintEvent(QPaintEvent* pEvent)
    {
       caption = _title;
    }
-   DrawSeries(&painter, area, _series, false, caption, logarithmic && UseLogAxis(RangeOf(_series, false)));
+   const bool logAxis = logarithmic && UseLogAxis(RangeOf(_series, false));
+   RememberAxis(area, RangeOf(_series, false).minimum, RangeOf(_series, false).maximum, logAxis ? AxisScale::Logarithmic : AxisScale::Linear);
+   DrawSeries(&painter, area, _series, false, caption, logAxis);
    DrawLegend(&painter, _series, PlotMarginLeftPx, 2);
+   DrawCursor(&painter);
+}
+
+void ResultPlot::DrawCursor(QPainter* pPainter)
+{
+   if (pPainter == nullptr || _hasCursor == false || _axisArea.width() <= 0)
+   {
+      return;
+   }
+   AxisRange range{_axisMinimum, _axisMaximum};
+   const bool logarithmic = _axisScale == AxisScale::Logarithmic;
+   const double x = MapAlong(_cursorX, range, logarithmic, _axisArea.left(), _axisArea.width());
+   pPainter->setPen(QColor(20, 20, 20));
+   pPainter->drawLine(QPointF(x, _axisArea.top()), QPointF(x, _axisArea.bottom()));
+}
+
+void ResultPlot::mousePressEvent(QMouseEvent* pEvent)
+{
+   if (pEvent == nullptr || _kind == PlotKind::Empty || _kind == PlotKind::DcBars || _axisArea.width() <= 0)
+   {
+      QWidget::mousePressEvent(pEvent);
+      return;
+   }
+   const QPoint position = pEvent->position().toPoint();
+   if (_axisArea.contains(position) == false)
+   {
+      QWidget::mousePressEvent(pEvent);
+      return;
+   }
+   AxisRange range{_axisMinimum, _axisMaximum};
+   _cursorX = UnmapAlong(static_cast<double>(position.x()), range, _axisScale == AxisScale::Logarithmic, _axisArea.left(), _axisArea.width());
+   _hasCursor = true;
+   update();
+   emit CursorMoved(_cursorX);
+   pEvent->accept();
 }
 
 } // namespace Analyzer

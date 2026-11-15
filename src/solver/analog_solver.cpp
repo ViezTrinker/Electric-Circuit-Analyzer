@@ -9,6 +9,7 @@
 #include "device_model.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <cstdint>
@@ -443,6 +444,15 @@ PreparedCircuit Prepare(const Netlist& netlist, bool directCurrent, SwitchSchedu
             prepared.totalNets += 1;
          }
       }
+      if (device.kind == ComponentKind::Capacitor)
+      {
+         const CapacitorProperties* pCapacitor = std::get_if<CapacitorProperties>(&device.properties);
+         if (pCapacitor != nullptr && pCapacitor->esrOhm > 0.0)
+         {
+            slot.extra[0] = prepared.totalNets;
+            prepared.totalNets += 1;
+         }
+      }
       if (device.kind == ComponentKind::SevenSegment)
       {
          const SevenSegmentProperties* pDisplay = std::get_if<SevenSegmentProperties>(&device.properties);
@@ -502,7 +512,12 @@ void RecordSample(TransientResult* pResult, const VoltageList& voltage, uint32_t
 {
    TransientSample sample = {};
    sample.timeSec = timeSec;
-   sample.netVoltage = voltage;
+   uint32_t kept = netCount;
+   if (static_cast<uint32_t>(voltage.size()) < kept)
+   {
+      kept = static_cast<uint32_t>(voltage.size());
+   }
+   sample.netVoltage.assign(voltage.begin(), voltage.begin() + kept);
    sample.netLevel.assign(netCount, LogicLevel::HighZ);
    pResult->samples.push_back(sample);
 }
@@ -977,7 +992,7 @@ enum class DriveStamp : int8_t
    DcNorton = 0
 };
 
-Result StampLogicDrives(DenseSystem<double>* pSystem, const LogicDriveList* pDrives, DriveStamp stamp)
+Result StampLogicDrives(DenseSystem<double>* pSystem, const LogicDriveList* pDrives, DriveStamp stamp, double sourceScale)
 {
    if (pSystem == nullptr)
    {
@@ -1000,7 +1015,7 @@ Result StampLogicDrives(DenseSystem<double>* pSystem, const LogicDriveList* pDri
       StampConductance(pSystem, drive.netIndex, GroundNetIndex, 1.0 / drive.resistanceOhm);
       if (stamp == DriveStamp::DcNorton)
       {
-         StampInjection(pSystem, drive.netIndex, drive.voltageVolt / drive.resistanceOhm);
+         StampInjection(pSystem, drive.netIndex, sourceScale * drive.voltageVolt / drive.resistanceOhm);
       }
    }
    return Result::Ok;
@@ -1033,6 +1048,21 @@ DcResult SolveDcAnalog(const Netlist& netlist, const AnalysisSettings& settings,
    std::vector<double> branchCurrents(prepared.branchCount, 0.0);
    bool converged = false;
    bool freezeTimers = false;
+   constexpr uint32_t SourceLadderCount = 6;
+   using SourceLadder = std::array<double, SourceLadderCount>;
+   constexpr SourceLadder SourceScales{1.0, 0.0625, 0.125, 0.25, 0.5, 1.0};
+   for (uint32_t sourcePass = 0; sourcePass < SourceLadderCount && converged == false; sourcePass += 1)
+   {
+   const double sourceScale = SourceScales[sourcePass];
+   if (sourcePass == 1)
+   {
+      voltage.assign(voltage.size(), 0.0);
+      std::fill(branchCurrents.begin(), branchCurrents.end(), 0.0);
+      std::fill(timerLevel.begin(), timerLevel.end(), TimerOutputLow);
+   }
+   freezeTimers = false;
+   bool solvedThisPass = false;
+   bool passConverged = false;
    for (uint32_t iteration = 0; iteration < MaxNewtonIterations + TimerSettleExtraIterations; iteration += 1)
    {
       if (pCancel != nullptr && pCancel->IsRequested())
@@ -1081,7 +1111,7 @@ DcResult SolveDcAnalog(const Netlist& netlist, const AnalysisSettings& settings,
                return result;
             }
             uint32_t branchUnknown = (prepared.totalNets - 1) + slot.branch;
-            StampVoltageSource(&system, device.nets[1], device.nets[0], branchUnknown, pSource->dcVoltageVolt);
+            StampVoltageSource(&system, device.nets[1], device.nets[0], branchUnknown, pSource->dcVoltageVolt * sourceScale);
          }
          else if (device.kind == ComponentKind::CurrentSource)
          {
@@ -1091,8 +1121,8 @@ DcResult SolveDcAnalog(const Netlist& netlist, const AnalysisSettings& settings,
                result.code = Result::InvalidParameter;
                return result;
             }
-            StampInjection(&system, device.nets[0], -pSource->dcCurrentAmpere);
-            StampInjection(&system, device.nets[1], pSource->dcCurrentAmpere);
+            StampInjection(&system, device.nets[0], -pSource->dcCurrentAmpere * sourceScale);
+            StampInjection(&system, device.nets[1], pSource->dcCurrentAmpere * sourceScale);
          }
          else if (device.kind == ComponentKind::Resistor || device.kind == ComponentKind::Potentiometer || device.kind == ComponentKind::Inductor || device.kind == ComponentKind::Capacitor || device.kind == ComponentKind::Ground || device.kind == ComponentKind::Voltmeter)
          {
@@ -1344,7 +1374,7 @@ DcResult SolveDcAnalog(const Netlist& netlist, const AnalysisSettings& settings,
             }
          }
       }
-      Result drivesStamped = StampLogicDrives(&system, pDrives, DriveStamp::DcNorton);
+      Result drivesStamped = StampLogicDrives(&system, pDrives, DriveStamp::DcNorton, sourceScale);
       if (IsErr(drivesStamped))
       {
          result.code = drivesStamped;
@@ -1353,16 +1383,21 @@ DcResult SolveDcAnalog(const Netlist& netlist, const AnalysisSettings& settings,
       }
       if (unknownCount == 0)
       {
-         converged = true;
+         passConverged = true;
          break;
       }
       Result solved = system.FactorizeAndSolve();
       if (IsErr(solved))
       {
-         result.code = solved;
-         result.message = Describe(solved);
-         return result;
+         if (solvedThisPass == false && sourcePass + 1 == SourceLadderCount)
+         {
+            result.code = solved;
+            result.message = Describe(solved);
+            return result;
+         }
+         break;
       }
+      solvedThisPass = true;
       for (uint32_t net = 1; net < prepared.totalNets; net += 1)
       {
          proposed[net] = system.Solution(net - 1);
@@ -1438,9 +1473,18 @@ DcResult SolveDcAnalog(const Netlist& netlist, const AnalysisSettings& settings,
       }
       if (timerChanged == false && alpha > 0.999 && maxChange <= (VoltageAbsoluteTolerance + VoltageRelativeTolerance))
       {
-         converged = true;
+         passConverged = true;
          break;
       }
+   }
+   if (passConverged && sourceScale == 1.0)
+   {
+      converged = true;
+   }
+   if (passConverged == false && sourcePass > 0)
+   {
+      break;
+   }
    }
    if (converged == false)
    {
@@ -2098,7 +2142,19 @@ Result StampTransientLinear(DenseSystem<double>* pSystem, const Netlist& netlist
          {
             return Result::InvalidParameter;
          }
-         double previous = VoltageBetween(acceptedVoltage, device.nets[0], device.nets[1]);
+         uint32_t positiveNet = device.nets[0];
+         uint32_t negativeNet = device.nets[1];
+         if (pCapacitor->esrOhm > 0.0)
+         {
+            uint32_t junctionNet = slot.extra[0];
+            Result series = StampResistor(pSystem, positiveNet, junctionNet, pCapacitor->esrOhm);
+            if (IsErr(series))
+            {
+               return series;
+            }
+            positiveNet = junctionNet;
+         }
+         double previous = VoltageBetween(acceptedVoltage, positiveNet, negativeNet);
          if (acceptedSteps == 0 && settings.initialConditions == InitialConditionMode::ComponentValues)
          {
             previous = pCapacitor->initialVoltageVolt;
@@ -2113,9 +2169,9 @@ Result StampTransientLinear(DenseSystem<double>* pSystem, const Netlist& netlist
                historyCurrent = inductorCurrent[index];
             }
          }
-         StampConductance(pSystem, device.nets[0], device.nets[1], equivalentConductance);
-         StampInjection(pSystem, device.nets[0], (equivalentConductance * previous) + historyCurrent);
-         StampInjection(pSystem, device.nets[1], -((equivalentConductance * previous) + historyCurrent));
+         StampConductance(pSystem, positiveNet, negativeNet, equivalentConductance);
+         StampInjection(pSystem, positiveNet, (equivalentConductance * previous) + historyCurrent);
+         StampInjection(pSystem, negativeNet, -((equivalentConductance * previous) + historyCurrent));
       }
       else if (device.kind == ComponentKind::Inductor)
       {
@@ -2362,7 +2418,7 @@ TransientResult SolveTransientAnalog(const Netlist& netlist, const AnalysisSetti
             result.message = stampMessage.empty() ? Describe(junctions) : stampMessage;
             return result;
          }
-         Result drivesStamped = StampLogicDrives(&system, pDrives, DriveStamp::DcNorton);
+         Result drivesStamped = StampLogicDrives(&system, pDrives, DriveStamp::DcNorton, 1.0);
          if (IsErr(drivesStamped))
          {
             result.code = drivesStamped;
@@ -2405,10 +2461,7 @@ TransientResult SolveTransientAnalog(const Netlist& netlist, const AnalysisSetti
          }
          continue;
       }
-      for (uint32_t net = 1; net < netlist.netCount && net < storedNetCount; net += 1)
-      {
-         voltage[net] = operating[net];
-      }
+      voltage = operating;
       timerLevel = trialLevel;
       timerChangeAt = trialChangeAt;
       for (size_t index = 0; index < netlist.devices.size(); index += 1)

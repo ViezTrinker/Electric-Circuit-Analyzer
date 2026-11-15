@@ -12,6 +12,9 @@
 #include <QPainter>
 #include <QWheelEvent>
 
+#include <string>
+#include <vector>
+
 #include "core/circuit.h"
 
 namespace Analyzer
@@ -26,6 +29,17 @@ enum class Placement : int8_t
    Armed,
    Wire
 };
+
+/*!
+ * \brief One measured value drawn on the sheet.
+ */
+struct SheetNote
+{
+   GridPoint point;
+   std::string text;
+};
+
+using SheetNoteList = std::vector<SheetNote>;
 
 /*!
  * \brief Schematic sheet. Parts are drawn from pin positions on the grid.
@@ -55,6 +69,18 @@ public:
     * \param[in] placement Idle selects parts. Armed emits PlaceRequested. Wire emits WirePointRequested.
     */
    void SetPlacement(Placement placement);
+
+   /*!
+    * \brief Stores the measured values drawn beside the sheet.
+    *
+    * \param[in] notes Grid point and text pairs. May be empty.
+    */
+   void SetNotes(const SheetNoteList& notes);
+
+   /*!
+    * \brief Redraws the measured values without rebuilding the parts.
+    */
+   void RefreshNotes(void);
 
    /*!
     * \brief Stores the wire that is still being drawn.
@@ -175,9 +201,15 @@ private:
     */
    uint64_t ComponentIdOf(QGraphicsItem* pItem) const;
 
+   /*!
+    * \brief Draws the stored notes on top of the current scene.
+    */
+   void DrawNotes(void);
+
    QGraphicsScene* _pScene;
    Placement _placement;
    GridPointList _wirePreview;
+   SheetNoteList _notes;
    QGraphicsItem* _pDragItem;
    QPointF _dragAnchor;
    QPointF _dragGrab;

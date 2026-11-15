@@ -17,7 +17,8 @@
 
 class QAction;
 class QLabel;
-class QLineEdit;
+class QTableWidget;
+class QTableWidgetItem;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QPlainTextEdit;
@@ -94,9 +95,35 @@ private:
    void OnSelectionChanged(void);
 
    /*!
-    * \brief Writes the edited value back to the part.
+    * \brief Writes an edited numeric value or switch event list back to the part.
+    *
+    * \param[in] pItem Edited table cell.
     */
-   void OnValueEdited(void);
+   void OnPropertyEdited(QTableWidgetItem* pItem);
+
+   /*!
+    * \brief Writes the selected enumeration code back to the part.
+    *
+    * \param[in] index Selected combo index.
+    */
+   void OnEnumEdited(int index);
+
+   /*!
+    * \brief Moves the schematic readout to the plot cursor.
+    *
+    * \param[in] position Frequency or time selected on the diagram.
+    */
+   void OnPlotCursor(double position);
+
+   /*!
+    * \brief Draws the latest measured values on the sheet.
+    */
+   void ApplySheetNotes(void);
+
+   /*!
+    * \brief Clears the plot, the cursor, and the schematic readouts.
+    */
+   void ClearResults(void);
 
    /*!
     * \brief Clears the document.
@@ -241,8 +268,7 @@ private:
    QTreeWidget* _pPalette;
    QLabel* _pNameLabel;
    QLabel* _pKindLabel;
-   QLabel* _pValueCaption;
-   QLineEdit* _pValueEdit;
+   QTableWidget* _pProperties;
    QPlainTextEdit* _pResults;
    ResultPlot* _pPlot;
    QAction* _pUndoAction;
@@ -254,8 +280,10 @@ private:
    AnalysisWorker _worker;
    Placement _placement;
    ComponentKind _armedKind;
-   NumericProperty _editedProperty;
    bool _updatingProperties;
+   bool _cursorValid;
+   double _cursorPosition;
+   SheetNoteList _sheetNotes;
    UndoHistory _history;
    QList<QString> _savedPaths;
    QList<QString> _redoPaths;

@@ -922,4 +922,14 @@ Result ReadCircuitText(std::string_view text, Circuit* pCircuit)
    return Result::Ok;
 }
 
+std::string_view NumericPropertyKey(NumericProperty property)
+{
+   return NumericKey(property);
+}
+
+std::string_view EnumPropertyKey(EnumProperty property)
+{
+   return EnumKey(property);
+}
+
 } // namespace Analyzer

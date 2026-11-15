@@ -115,11 +115,19 @@ void TestRoundTrip(void)
    Expect(preserved.Name() == "keep", "unknown kind keeps the circuit");
 }
 
+void TestPropertyKeys(void)
+{
+   Expect(Analyzer::NumericPropertyKey(Analyzer::NumericProperty::ResistanceOhm) == "resistanceOhm", "resistance key");
+   Expect(Analyzer::EnumPropertyKey(Analyzer::EnumProperty::RestState) == "restState", "rest state key");
+   Expect(Analyzer::NumericPropertyKey(static_cast<Analyzer::NumericProperty>(-1)).empty(), "unknown numeric key");
+}
+
 } // namespace
 
 int RunFileTests(void)
 {
    gFailures = 0;
    TestRoundTrip();
+   TestPropertyKeys();
    return gFailures;
 }

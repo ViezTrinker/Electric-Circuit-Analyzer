@@ -31,6 +31,9 @@ constexpr qreal ZoomOutFactor = 1.0 / ZoomInFactor;
 constexpr int ComponentIdKey = 0;
 constexpr int AnchorXKey = 1;
 constexpr int AnchorYKey = 2;
+constexpr int NoteKey = 3;
+constexpr qreal NoteOffsetX = 8.0;
+constexpr qreal NoteOffsetY = -16.0;
 
 QPointF ToScene(GridPoint point)
 {
@@ -49,6 +52,7 @@ SchematicView::SchematicView(QWidget* pParent)
    , _pScene(new QGraphicsScene(this))
    , _placement(Placement::Idle)
    , _wirePreview()
+   , _notes()
    , _pDragItem(nullptr)
    , _dragAnchor()
    , _dragGrab()
@@ -115,6 +119,48 @@ void SchematicView::ShowCircuit(const Circuit& circuit)
    {
       const QPointF start = ToScene(_wirePreview.front());
       _pScene->addEllipse(start.x() - PinRadius, start.y() - PinRadius, PinRadius * 2.0, PinRadius * 2.0, previewPen);
+   }
+   DrawNotes();
+}
+
+void SchematicView::SetNotes(const SheetNoteList& notes)
+{
+   _notes = notes;
+}
+
+void SchematicView::RefreshNotes(void)
+{
+   DrawNotes();
+}
+
+void SchematicView::DrawNotes(void)
+{
+   QList<QGraphicsItem*> existing = _pScene->items();
+   QList<QGraphicsItem*> stale;
+   for (QGraphicsItem* pItem : existing)
+   {
+      if (pItem != nullptr && pItem->data(NoteKey).isValid())
+      {
+         stale.append(pItem);
+      }
+   }
+   for (QGraphicsItem* pItem : stale)
+   {
+      _pScene->removeItem(pItem);
+      delete pItem;
+   }
+   for (const SheetNote& note : _notes)
+   {
+      if (note.text.empty())
+      {
+         continue;
+      }
+      QGraphicsSimpleTextItem* pText = _pScene->addSimpleText(QString::fromStdString(note.text));
+      const QPointF origin = ToScene(note.point);
+      pText->setPos(origin.x() + NoteOffsetX, origin.y() + NoteOffsetY);
+      pText->setBrush(QColor(20, 110, 60));
+      pText->setData(NoteKey, true);
+      pText->setFlag(QGraphicsItem::ItemIsSelectable, false);
    }
 }
 

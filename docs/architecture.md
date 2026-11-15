@@ -1,6 +1,6 @@
 # Architecture
 
-The analyzer is a library plus the window executable `eca_analyzer`. A schematic is a `Circuit`. Analysis compiles that document into a `Netlist`, then solves the analog matrix, the logic event queue, or both. The window in `src/ui` places parts, drags them to a new cell, turns them with R, and draws orthogonal wires. Wire vertices that sit on a moved or rotated pin follow that pin, and a diagonal segment gains a corner. The window edits one numeric value, supports undo and redo, and runs DC, AC, and transient on a worker thread. DC draws one bar per node voltage. AC draws magnitude and phase. A transient draws the changing node voltages or logic levels, and a spectrum when an analog voltage moves. The File menu opens the schematics in `examples/`. A full property panel stays outside that window for now.
+The analyzer is a library plus the window executable `eca_analyzer`. A schematic is a `Circuit`. Analysis compiles that document into a `Netlist`, then solves the analog matrix, the logic event queue, or both. The window in `src/ui` places parts, drags them to a new cell, turns them with R, and draws orthogonal wires. Wire vertices that sit on a moved or rotated pin follow that pin, and a diagonal segment gains a corner. The property table edits every numeric and enumerated field of the selected part, and a switch event list written as `1m closed, 2m open`. Undo and redo cover those edits. DC, AC, and transient run on a worker thread. DC draws one bar per node voltage and writes the voltage on the sheet. AC draws magnitude and phase. A click on the diagram moves a cursor, and the sheet shows magnitude and phase, or the transient value, at that cursor. A transient draws analog voltages and a spectrum when a voltage moves. Logic traces are stacked in a timing diagram. The File menu opens the schematics in `examples/`.
 
 ```text
 Circuit
@@ -44,7 +44,7 @@ Ideal shorts are not merged into one net. A closed ideal switch, an ideal ammete
 | `MissingGround` | An analog device is present and no ground symbol exists. |
 | `VoltageSourceLoop` | Voltage sources or ideal shorts close a loop. |
 | `SingularMatrix` | Gaussian elimination finds no usable pivot. |
-| `NoConvergence` | Newton or the transient step control gives up. |
+| `NoConvergence` | Newton or the transient step control gives up. DC first tries the full sources. If that does not converge, it starts from zero and raises independent voltage sources, current sources, and logic-drive voltages through 1/16, 1/8, 1/4, 1/2, and full scale. |
 | `Oscillation` | Logic is still changing after 1000 delta cycles. |
 | `InvalidSweep` | The AC start or stop is not usable, or the start is above the stop. |
 | `InvalidTimeStep` | The transient stop or maximum step is not positive. |

@@ -6,6 +6,7 @@
 #include "logic_bridge.h"
 
 #include <array>
+#include <cmath>
 
 #include "analog_solver.h"
 #include "digital/logic_kernel.h"
@@ -539,6 +540,32 @@ Result AppendDrives(const Netlist& netlist, const HoldMask& touch, const HoldMas
             stamped[net] = 1;
          }
       }
+   }
+   for (const NetlistDevice& device : netlist.devices)
+   {
+      if (device.kind != ComponentKind::PullUp && device.kind != ComponentKind::PullDown)
+      {
+         continue;
+      }
+      if (device.pinCount == 0)
+      {
+         continue;
+      }
+      uint32_t net = device.nets[0];
+      if (net == GroundNetIndex || net >= netlist.netCount || net >= touch.size() || touch[net] == 0)
+      {
+         continue;
+      }
+      const PullProperties* pPull = std::get_if<PullProperties>(&device.properties);
+      if (pPull == nullptr || std::isfinite(pPull->resistanceOhm) == false || pPull->resistanceOhm <= 0.0)
+      {
+         return Result::InvalidParameter;
+      }
+      LogicDrive pullDrive = {};
+      pullDrive.netIndex = net;
+      pullDrive.resistanceOhm = pPull->resistanceOhm;
+      pullDrive.voltageVolt = device.kind == ComponentKind::PullUp ? pPull->logic.supplyVoltageVolt : 0.0;
+      pDrives->push_back(pullDrive);
    }
    return Result::Ok;
 }

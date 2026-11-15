@@ -12,11 +12,11 @@ Currents into a device are positive unless a section below says otherwise. Branc
 | Current source | 0 tail, 1 head | Current flows from tail to head. An AC amplitude of 0 is an open. |
 | Resistor | 0, 1 | Conductance `1/R`. |
 | Potentiometer | A, wiper, B | Two resistors split by the wiper fraction. Each section stays at least `1e-6` of the total. |
-| Capacitor | 0, 1 | Open at DC. Transient companion uses `C/h` or `2C/h`. Optional ESR is stored and not yet in the transient stamp. |
+| Capacitor | 0, 1 | Open at DC. Transient companion uses `C/h` or `2C/h`. A positive ESR is a series resistor on an internal node between pin 0 and the companion. |
 | Inductor | 0, 1 | Short at DC when series R is 0, otherwise a resistor. Backward Euler uses `h/L`. Trapezoidal currently stamps `2h/L`. |
 | Ground | 1 | Net 0. |
 
-The diode knee is not a hard clamp. `forwardVoltageVolt` is the junction voltage at `forwardCurrentAmpere`, default 0.7 V at 1 mA. Saturation current follows from that point and the emission coefficient. Series resistance, when greater than zero, sits outside the junction on an internal node. Positive current is anode to cathode. The LED uses the same junction and adds a color for the schematic. Transient repeats that conductance at every accepted step. The AC sweep stamps the same conductance plus junction and transit capacitance. Those capacitances are not in the transient stamp.
+The diode knee is not a hard clamp. `forwardVoltageVolt` is the junction voltage at `forwardCurrentAmpere`, default 0.7 V at 1 mA. Saturation current follows from that point and the emission coefficient. Above `Vt ln(Vt / (sqrt(2) Is))` the DC stamp follows the tangent at that voltage, and the junction conductance is capped, so an ideal source across the diode can still set the terminal voltage. Series resistance, when greater than zero, sits outside the junction on an internal node. Positive current is anode to cathode. The LED uses the same junction and adds a color for the schematic. Transient repeats that conductance at every accepted step. The AC sweep stamps the same conductance plus junction and transit capacitance. Those capacitances are not in the transient stamp.
 
 The BJT is an Ebers-Moll transport model. Pins are collector, base, emitter. Currents are into the device. An Early voltage of 0 means infinite Early voltage. Junction capacitances and transit times default to 0. The AC sweep stamps them on top of the transconductances, using a built-in potential of 0.7 V and a grading coefficient of 0.5. They are not part of the transient stamp. Newton limits each base junction step to two thermal voltages.
 
@@ -42,7 +42,7 @@ A logic input stores nothing while the net is purely digital. High-Z on an input
 
 CMOS thresholds scale as 0.7 and 0.3 of the supply. TTL stays at Vol 0.2 V, Voh 3.4 V, Vil 0.8 V, and Vih 2.0 V until the family is Custom. The default family is CMOS 5 V. The default output resistance is 100 ohm, the delay is 10 ns, and the rise and fall times are 5 ns. Gate supply current is not modeled.
 
-On a mixed net the DC solver stamps a high output as `vohVolt` and a low output as `volVolt`, each behind `outputResistanceOhm`. High-Z and Conflict add no drive. An output resistance of 0 is stamped as 1 mΩ. The AC sweep keeps that resistance to ground and contributes no controlled source, so the gate does not amplify. Pull-up and pull-down parts on a mixed net are not yet resistors to the supply.
+On a mixed net the DC solver stamps a high output as `vohVolt` and a low output as `volVolt`, each behind `outputResistanceOhm`. High-Z and Conflict add no drive. An output resistance of 0 is stamped as 1 mΩ. The AC sweep keeps that resistance to ground and contributes no controlled source, so the gate does not amplify. A pull-up on an analog or mixed net is its resistance to the logic supply. A pull-down is that resistance to ground. On a pure logic net they stay weak logic drives.
 
 | Kind | Pins, rotation 0 |
 | --- | --- |
@@ -61,7 +61,7 @@ On a mixed net the DC solver stamps a high output as `vohVolt` and a low output 
 | Full adder | A, B, Cin, Sum, Cout |
 | 4-bit counter | Clock, clear, enable, Q0 to Q3, carry. Carry is high when the count is 15. |
 | 4-bit shift register | Clock, clear, serial in, Q0 to Q3. The shift moves toward Q3. Serial data enters Q0. |
-| Pull-up, pull-down | One pin. Weak high or weak low on a pure logic net. |
+| Pull-up, pull-down | One pin. Weak high or weak low on a pure logic net. On an analog or mixed net, a resistor to the logic supply or to ground. |
 
 Preset, clear, set, reset, and enable each have an active-high or active-low polarity. Both preset and clear active, or both set and reset active, produce Conflict. J = K = high toggles. T high toggles and T low holds. Clock-to-Q is at least one delta even when the delay is 0.
 
@@ -85,6 +85,9 @@ These are the checks in `tests/test_analysis.cpp`, `tests/test_digital.cpp`, and
 - An inverter input tied to ground drives 5 V through 100 Ω into 1 kΩ, so the output node is 4.545 V. The same node has no AC gain.
 - A 1 kHz clock, 220 Ω, and an LED conduct only while the clock output is high. The transient step ends at each clock edge.
 - A 5 V source, 220 Ω, and the default LED conduct. An ideal switch across the lower resistor of a divider shorts that node. A 100 Ω closed switch does not. A closed switch that opens at 1 ms releases that node in the transient.
+- A 5 V source tied directly across the default diode converges, and the anode sits at 5 V.
+- A 1 kΩ resistor, 1 kΩ capacitor ESR, and 1 µF, stepped to 1 V, is near `1 - 0.5 exp(-1)` at 2 ms.
+- A 1 kΩ pull-up on the same net as a 1 kΩ resistor to ground divides the 5 V logic supply to 2.5 V.
 - A common-cathode segment tied to 5 V draws current through its 330 Ω resistor.
 - A comparator with IN+ above IN- pulls the output toward VCC. A relay coil above pull-in closes the normally open contact.
 - DAC code 1 with a 15 V reference produces 1 V behind the output resistance. ADC code for 5 V on an 8 V reference is 10.

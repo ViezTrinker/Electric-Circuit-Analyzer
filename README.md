@@ -1,6 +1,6 @@
 # Electric Circuit Analyzer
 
-Desktop circuit analyzer for linear and nonlinear DC, AC sweeps, transient runs, and event-driven logic. The window executable is `eca_analyzer`. It places, moves, and rotates parts, draws orthogonal wires, edits the main value of a selected part, and saves a `.eca.json` document. DC draws node voltages, AC draws a Bode diagram, and a transient draws time curves plus a spectrum when a node voltage changes. Example circuits live in `examples/`. The library behind that window is covered by tests.
+Desktop circuit analyzer for linear and nonlinear DC, AC sweeps, transient runs, and event-driven logic. The window executable is `eca_analyzer`. It places, moves, and rotates parts, draws orthogonal wires, edits every numeric and enumerated property of the selected part, and saves a `.eca.json` document. DC draws node voltages on a bar chart and on the sheet. AC draws a Bode diagram. A click on a diagram sets a cursor, and the sheet shows the value at that cursor. A transient draws time curves plus a spectrum when a node voltage changes, and a stacked timing diagram when logic levels change. Example circuits live in `examples/`. The library behind that window is covered by tests.
 
 The program, its messages, and this documentation are in English.
 
@@ -67,7 +67,5 @@ This project is licensed under the [MIT License](LICENSE). The vendored JSON hea
 
 ## Not in this tree yet
 
-- A full property panel
-- Pull-up and pull-down parts on a mixed analog net are not yet resistors to a supply
 - A full 74xx catalog, RAM, ROM, and FPGA fabrics
 - VHDL, Verilog, SPICE import, noise, op-amps, and transformers

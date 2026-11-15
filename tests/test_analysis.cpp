@@ -436,6 +436,66 @@ void TestMosfetGain(void)
    ExpectNear(AcMagnitude(result, PinNetOf(circuit, mosfet, 0)), expected, expected * 0.02, "mosfet drain gain");
 }
 
+void TestDirectDiode(void)
+{
+   Analyzer::Circuit circuit;
+   Place(&circuit, Analyzer::ComponentKind::Ground, 0, 0, 0);
+   uint64_t source = Place(&circuit, Analyzer::ComponentKind::VoltageSource, 0, 0, 90);
+   uint64_t diode = Place(&circuit, Analyzer::ComponentKind::Diode, 0, 2, 270);
+   SetNumber(&circuit, source, Analyzer::NumericProperty::DcVoltageVolt, 5.0);
+   Analyzer::DcResult result = Analyzer::SolveDc(circuit, nullptr);
+   Expect(Analyzer::IsOk(result.code), result.message);
+   ExpectNear(NetVoltageOfPin(circuit, result, diode, 0), 5.0, 1.0e-3, "ideal source across a diode");
+}
+
+void TestCapacitorEsr(void)
+{
+   Analyzer::Circuit circuit;
+   Place(&circuit, Analyzer::ComponentKind::Ground, 0, 0, 0);
+   uint64_t source = Place(&circuit, Analyzer::ComponentKind::VoltageSource, 0, 0, 90);
+   uint64_t resistor = Place(&circuit, Analyzer::ComponentKind::Resistor, 0, 2, 0);
+   uint64_t capacitor = Place(&circuit, Analyzer::ComponentKind::Capacitor, 2, 2, 270);
+   SetNumber(&circuit, source, Analyzer::NumericProperty::DcVoltageVolt, 0.0);
+   SetNumber(&circuit, resistor, Analyzer::NumericProperty::ResistanceOhm, 1000.0);
+   SetNumber(&circuit, capacitor, Analyzer::NumericProperty::CapacitanceFarad, 1.0e-6);
+   SetNumber(&circuit, capacitor, Analyzer::NumericProperty::EsrOhm, 1000.0);
+   Analyzer::Component* pSource = circuit.FindComponent(source);
+   Expect(pSource != nullptr, "esr source exists");
+   if (pSource != nullptr)
+   {
+      Expect(Analyzer::IsOk(Analyzer::WriteEnumCode(pSource, Analyzer::EnumProperty::TransientWaveform, 2)), "esr pulse waveform");
+   }
+   SetNumber(&circuit, source, Analyzer::NumericProperty::PulseInitial, 0.0);
+   SetNumber(&circuit, source, Analyzer::NumericProperty::PulseLevel, 1.0);
+   SetNumber(&circuit, source, Analyzer::NumericProperty::PulseDelaySec, 0.0);
+   SetNumber(&circuit, source, Analyzer::NumericProperty::PulseRiseSec, 0.0);
+   SetNumber(&circuit, source, Analyzer::NumericProperty::PulseFallSec, 0.0);
+   SetNumber(&circuit, source, Analyzer::NumericProperty::PulseWidthSec, 0.01);
+   SetNumber(&circuit, source, Analyzer::NumericProperty::PulsePeriodSec, 0.02);
+   Analyzer::Wire wire = {};
+   wire.points.push_back(Analyzer::GridPoint{2, 0});
+   wire.points.push_back(Analyzer::GridPoint{0, 0});
+   Expect(Analyzer::IsOk(circuit.AddWire(wire, nullptr)), "esr return wire");
+   circuit.Settings().integration = Analyzer::IntegrationMethod::BackwardEuler;
+   circuit.Settings().stopTimeSec = 0.005;
+   circuit.Settings().maximumStepSec = 1.0e-5;
+   Analyzer::TransientResult result = Analyzer::SolveTransient(circuit, nullptr);
+   Expect(Analyzer::IsOk(result.code), result.message);
+   uint32_t outputNet = PinNetOf(circuit, capacitor, 0);
+   double atTwoMilliseconds = 0.0;
+   for (const Analyzer::TransientSample& sample : result.samples)
+   {
+      if (sample.timeSec <= 0.002 && outputNet < sample.netVoltage.size())
+      {
+         atTwoMilliseconds = sample.netVoltage[outputNet];
+      }
+   }
+   constexpr double SeriesShare = 0.5;
+   constexpr double TimeConstantSec = 0.002;
+   double expected = 1.0 - (SeriesShare * std::exp(-0.002 / TimeConstantSec));
+   ExpectNear(atTwoMilliseconds, expected, 0.03, "capacitor esr at two milliseconds");
+}
+
 } // namespace
 
 int RunAnalysisTests(void)
@@ -450,5 +510,7 @@ int RunAnalysisTests(void)
    TestDiodeSmallSignal();
    TestBjtGain();
    TestMosfetGain();
+   TestDirectDiode();
+   TestCapacitorEsr();
    return gFailures;
 }

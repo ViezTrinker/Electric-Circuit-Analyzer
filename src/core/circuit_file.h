@@ -36,6 +36,20 @@ Result WriteCircuitText(const Circuit& circuit, std::string* pText);
  */
 Result ReadCircuitText(std::string_view text, Circuit* pCircuit);
 
+/*!
+ * \brief JSON key of one numeric property, or empty when the property is unknown.
+ *
+ * \param[in] property Numeric field.
+ */
+std::string_view NumericPropertyKey(NumericProperty property);
+
+/*!
+ * \brief JSON key of one enumeration property, or empty when the property is unknown.
+ *
+ * \param[in] property Enumeration field.
+ */
+std::string_view EnumPropertyKey(EnumProperty property);
+
 } // namespace Analyzer
 
 #endif // CIRCUIT_FILE_H

@@ -359,6 +359,19 @@ void TestClockLed(void)
    Expect(sawSecondOn, "clock led conducts again");
 }
 
+void TestMixedPull(void)
+{
+   Analyzer::Circuit circuit;
+   Place(&circuit, Analyzer::ComponentKind::Ground, 0, 0, 0);
+   uint64_t resistor = Place(&circuit, Analyzer::ComponentKind::Resistor, 0, 0, 90);
+   uint64_t pull = Place(&circuit, Analyzer::ComponentKind::PullUp, 0, 2, 0);
+   SetNumber(&circuit, resistor, Analyzer::NumericProperty::ResistanceOhm, 1000.0);
+   SetNumber(&circuit, pull, Analyzer::NumericProperty::ResistanceOhm, 1000.0);
+   Analyzer::DcResult result = Analyzer::SolveDc(circuit, nullptr);
+   Expect(Analyzer::IsOk(result.code), result.message);
+   ExpectNear(NetVoltageOfPin(circuit, result, pull, 0), 2.5, 1.0e-3, "mixed pull-up divider");
+}
+
 } // namespace
 
 int RunMixedTests(void)
@@ -370,5 +383,6 @@ int RunMixedTests(void)
    TestSwitchDivider();
    TestSwitchOpens();
    TestClockLed();
+   TestMixedPull();
    return gFailures;
 }

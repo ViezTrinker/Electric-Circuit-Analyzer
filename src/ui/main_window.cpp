@@ -1,6 +1,6 @@
 /*!
  * \file main_window.cpp
- * \brief Builds the analyzer window and runs a DC operating point.
+ * \brief Builds the analyzer window, the property table, and the result diagrams.
  */
 
 #include "main_window.h"
@@ -9,27 +9,33 @@
 #include <array>
 #include <cmath>
 #include <numbers>
+#include <string_view>
+#include <variant>
 
+#include <QAbstractItemView>
 #include <QAction>
+#include <QComboBox>
 #include <QCoreApplication>
 #include <QDir>
 #include <QDockWidget>
 #include <QFile>
 #include <QFileDialog>
-#include <QFormLayout>
 #include <QGraphicsScene>
+#include <QHeaderView>
 #include <QKeySequence>
 #include <QLabel>
-#include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QTableWidget>
 #include <QTreeWidget>
+#include <QVBoxLayout>
 
 #include "core/circuit_file.h"
 #include "core/example_circuits.h"
+#include "core/netlist_builder.h"
 #include "core/si_parser.h"
 #include "result_plot.h"
 
@@ -251,7 +257,11 @@ PlotSeriesList TimeSeries(const TransientResult& result)
       choice.netIndex = node.netIndex;
       choice.name = node.name;
       choice.logicTrace = (maximum - minimum) < AnalogSwingFloor && changes > 0;
-      choice.swing = choice.logicTrace ? static_cast<double>(changes) : (maximum - minimum);
+      if (choice.logicTrace)
+      {
+         continue;
+      }
+      choice.swing = maximum - minimum;
       KeepLargest(&choices, choice);
    }
    PlotSeriesList series;
@@ -261,24 +271,73 @@ PlotSeriesList TimeSeries(const TransientResult& result)
       curve.name = choice.name;
       for (const TransientSample& sample : result.samples)
       {
-         double value = 0.0;
-         if (choice.logicTrace)
+         if (choice.netIndex >= sample.netVoltage.size())
          {
-            if (choice.netIndex >= sample.netLevel.size())
-            {
-               continue;
-            }
-            value = LevelHeight(sample.netLevel[choice.netIndex]);
+            continue;
          }
-         else
+         AppendStep(&curve, sample.timeSec, sample.netVoltage[choice.netIndex]);
+      }
+      if (curve.samples.size() >= 2)
+      {
+         series.push_back(std::move(curve));
+      }
+   }
+   return series;
+}
+
+PlotSeriesList LogicSeries(const TransientResult& result)
+{
+   constexpr int32_t MaxTimingTraces = 12;
+   PlotSeriesList series;
+   for (const NodeValue& node : result.initial.nodes)
+   {
+      if (node.netIndex == 0 || static_cast<int32_t>(series.size()) >= MaxTimingTraces)
+      {
+         continue;
+      }
+      int32_t changes = 0;
+      LogicLevel previous = LogicLevel::Low;
+      bool haveLevel = false;
+      double minimum = 0.0;
+      double maximum = 0.0;
+      bool started = false;
+      for (const TransientSample& sample : result.samples)
+      {
+         if (node.netIndex < sample.netVoltage.size())
          {
-            if (choice.netIndex >= sample.netVoltage.size())
+            const double voltage = sample.netVoltage[node.netIndex];
+            if (started == false)
             {
-               continue;
+               minimum = voltage;
+               maximum = voltage;
+               started = true;
             }
-            value = sample.netVoltage[choice.netIndex];
+            minimum = std::min(minimum, voltage);
+            maximum = std::max(maximum, voltage);
          }
-         AppendStep(&curve, sample.timeSec, value);
+         if (node.netIndex < sample.netLevel.size())
+         {
+            if (haveLevel && sample.netLevel[node.netIndex] != previous)
+            {
+               changes += 1;
+            }
+            previous = sample.netLevel[node.netIndex];
+            haveLevel = true;
+         }
+      }
+      if (changes == 0 || (maximum - minimum) >= AnalogSwingFloor)
+      {
+         continue;
+      }
+      PlotSeries curve;
+      curve.name = node.name;
+      for (const TransientSample& sample : result.samples)
+      {
+         if (node.netIndex >= sample.netLevel.size())
+         {
+            continue;
+         }
+         AppendStep(&curve, sample.timeSec, LevelHeight(sample.netLevel[node.netIndex]));
       }
       if (curve.samples.size() >= 2)
       {
@@ -454,6 +513,177 @@ QString CircuitFileFilter(void)
    return "Circuit (*.eca.json)";
 }
 
+constexpr int PropertyKindRole = Qt::UserRole;
+constexpr int PropertyCodeRole = Qt::UserRole + 1;
+constexpr int NumericKind = 1;
+constexpr int EventKind = 2;
+
+QString PropertyCaption(std::string_view key)
+{
+   QString text;
+   bool wordStart = true;
+   for (const char character : key)
+   {
+      if (character >= 'A' && character <= 'Z' && text.isEmpty() == false)
+      {
+         text += ' ';
+      }
+      if (wordStart)
+      {
+         text += QChar(character).toUpper();
+         wordStart = false;
+      }
+      else
+      {
+         text += QChar(character);
+      }
+   }
+   return text;
+}
+
+std::string_view TrimView(std::string_view text)
+{
+   while (text.empty() == false && (text.front() == ' ' || text.front() == '\t'))
+   {
+      text.remove_prefix(1);
+   }
+   while (text.empty() == false && (text.back() == ' ' || text.back() == '\t'))
+   {
+      text.remove_suffix(1);
+   }
+   return text;
+}
+
+std::string FormatEvents(const SwitchEventList& events)
+{
+   std::string text;
+   for (const SwitchEvent& event : events)
+   {
+      if (text.empty() == false)
+      {
+         text += ", ";
+      }
+      text += FormatSiNumber(event.timeSec);
+      text += event.state == SwitchState::Closed ? " closed" : " open";
+   }
+   return text;
+}
+
+Result ParseEvents(std::string_view text, SwitchEventList* pEvents)
+{
+   if (pEvents == nullptr)
+   {
+      return Result::InvalidParameter;
+   }
+   SwitchEventList parsed;
+   std::string_view rest = text;
+   while (rest.empty() == false)
+   {
+      const size_t comma = rest.find(',');
+      const std::string_view token = TrimView(comma == std::string_view::npos ? rest : rest.substr(0, comma));
+      rest = comma == std::string_view::npos ? std::string_view() : rest.substr(comma + 1);
+      if (token.empty())
+      {
+         continue;
+      }
+      const size_t gap = token.find(' ');
+      if (gap == std::string_view::npos)
+      {
+         return Result::InvalidParameter;
+      }
+      double timeSec = 0.0;
+      if (IsErr(ParseSiNumber(token.substr(0, gap), &timeSec)))
+      {
+         return Result::InvalidParameter;
+      }
+      const std::string_view word = TrimView(token.substr(gap + 1));
+      SwitchEvent event = {};
+      event.timeSec = timeSec;
+      if (word == "closed")
+      {
+         event.state = SwitchState::Closed;
+      }
+      else if (word == "open")
+      {
+         event.state = SwitchState::Open;
+      }
+      else
+      {
+         return Result::InvalidParameter;
+      }
+      parsed.push_back(event);
+   }
+   *pEvents = std::move(parsed);
+   return Result::Ok;
+}
+
+SwitchEventList* EventListOf(Component* pComponent)
+{
+   if (pComponent == nullptr)
+   {
+      return nullptr;
+   }
+   if (SpstProperties* pSpst = std::get_if<SpstProperties>(&pComponent->properties))
+   {
+      return &pSpst->events;
+   }
+   if (PushbuttonProperties* pButton = std::get_if<PushbuttonProperties>(&pComponent->properties))
+   {
+      return &pButton->events;
+   }
+   return nullptr;
+}
+
+const SwitchEventList* EventListOf(const Component& component)
+{
+   if (const SpstProperties* pSpst = std::get_if<SpstProperties>(&component.properties))
+   {
+      return &pSpst->events;
+   }
+   if (const PushbuttonProperties* pButton = std::get_if<PushbuttonProperties>(&component.properties))
+   {
+      return &pButton->events;
+   }
+   return nullptr;
+}
+
+GridPoint FirstPinOfNet(const Circuit& circuit, uint32_t netIndex)
+{
+   Netlist netlist;
+   if (IsErr(BuildNetlist(circuit, &netlist)))
+   {
+      return GridPoint{0, 0};
+   }
+   for (const NetlistDevice& device : netlist.devices)
+   {
+      const Component* pComponent = circuit.FindComponent(device.componentId);
+      if (pComponent == nullptr)
+      {
+         continue;
+      }
+      for (uint8_t pinIndex = 0; pinIndex < device.pinCount; pinIndex += 1)
+      {
+         if (device.nets[pinIndex] == netIndex)
+         {
+            return PinPosition(*pComponent, pinIndex);
+         }
+      }
+   }
+   return GridPoint{0, 0};
+}
+
+void AddNote(SheetNoteList* pNotes, const Circuit& circuit, uint32_t netIndex, const std::string& text)
+{
+   if (pNotes == nullptr || netIndex == 0 || text.empty())
+   {
+      return;
+   }
+   SheetNote note = {};
+   note.point = FirstPinOfNet(circuit, netIndex);
+   note.text = text;
+   pNotes->push_back(note);
+}
+
 } // namespace
 
 MainWindow::MainWindow(QWidget* pParent)
@@ -462,8 +692,7 @@ MainWindow::MainWindow(QWidget* pParent)
    , _pPalette(new QTreeWidget(this))
    , _pNameLabel(new QLabel(this))
    , _pKindLabel(new QLabel(this))
-   , _pValueCaption(new QLabel("Value", this))
-   , _pValueEdit(new QLineEdit(this))
+   , _pProperties(new QTableWidget(0, 2, this))
    , _pResults(new QPlainTextEdit(this))
    , _pPlot(new ResultPlot(this))
    , _pUndoAction(nullptr)
@@ -475,8 +704,10 @@ MainWindow::MainWindow(QWidget* pParent)
    , _worker(this)
    , _placement(Placement::Idle)
    , _armedKind(ComponentKind::Resistor)
-   , _editedProperty(NumericProperty::ResistanceOhm)
    , _updatingProperties(false)
+   , _cursorValid(false)
+   , _cursorPosition(0.0)
+   , _sheetNotes()
    , _history()
    , _savedPaths()
    , _redoPaths()
@@ -487,7 +718,10 @@ MainWindow::MainWindow(QWidget* pParent)
    resize(1180, 760);
    setCentralWidget(_pSchematic);
    _pResults->setReadOnly(true);
-   _pValueEdit->setEnabled(false);
+   _pProperties->setHorizontalHeaderLabels({"Property", "Value"});
+   _pProperties->horizontalHeader()->setStretchLastSection(true);
+   _pProperties->verticalHeader()->setVisible(false);
+   _pProperties->setSelectionMode(QAbstractItemView::SingleSelection);
    _pPalette->setHeaderHidden(true);
    _pPalette->setRootIsDecorated(true);
 
@@ -511,10 +745,10 @@ MainWindow::MainWindow(QWidget* pParent)
    addDockWidget(Qt::LeftDockWidgetArea, pPaletteDock);
 
    QWidget* pPropertyPanel = new QWidget(this);
-   QFormLayout* pForm = new QFormLayout(pPropertyPanel);
-   pForm->addRow("Name", _pNameLabel);
-   pForm->addRow("Kind", _pKindLabel);
-   pForm->addRow(_pValueCaption, _pValueEdit);
+   QVBoxLayout* pPropertyLayout = new QVBoxLayout(pPropertyPanel);
+   pPropertyLayout->addWidget(_pNameLabel);
+   pPropertyLayout->addWidget(_pKindLabel);
+   pPropertyLayout->addWidget(_pProperties);
    QDockWidget* pPropertyDock = new QDockWidget("Properties", this);
    pPropertyDock->setWidget(pPropertyPanel);
    addDockWidget(Qt::RightDockWidgetArea, pPropertyDock);
@@ -589,7 +823,8 @@ MainWindow::MainWindow(QWidget* pParent)
    connect(_pSchematic, &SchematicView::ComponentMoved, this, &MainWindow::OnComponentMoved);
    connect(_pSchematic, &SchematicView::RotateRequested, this, &MainWindow::OnRotateRequested);
    connect(_pSchematic->scene(), &QGraphicsScene::selectionChanged, this, &MainWindow::OnSelectionChanged);
-   connect(_pValueEdit, &QLineEdit::editingFinished, this, &MainWindow::OnValueEdited);
+   connect(_pProperties, &QTableWidget::itemChanged, this, &MainWindow::OnPropertyEdited);
+   connect(_pPlot, &ResultPlot::CursorMoved, this, &MainWindow::OnPlotCursor);
 
    statusBar()->showMessage("Drag a part to move it. R rotates it. Edit, Draw Wire adds an orthogonal wire.");
    UpdateHistoryActions();
@@ -600,6 +835,7 @@ MainWindow::MainWindow(QWidget* pParent)
 void MainWindow::RefreshSheet(void)
 {
    _pSchematic->SetWirePreview(_wirePoints);
+   _pSchematic->SetNotes(_sheetNotes);
    _pSchematic->ShowCircuit(_circuit);
    const QString title = QString::fromStdString(_circuit.Name());
    setWindowTitle(title + " - Electric Circuit Analyzer");
@@ -610,37 +846,78 @@ void MainWindow::ShowSelection(void)
    const uint64_t selectedId = _pSchematic->SelectedComponentId();
    const Component* pComponent = _circuit.FindComponent(selectedId);
    _updatingProperties = true;
+   _pProperties->blockSignals(true);
+   _pProperties->setRowCount(0);
    if (pComponent == nullptr)
    {
       _pNameLabel->setText("None");
       _pKindLabel->setText("");
-      _pValueCaption->setText("Value");
-      _pValueEdit->clear();
-      _pValueEdit->setEnabled(false);
+      _pProperties->blockSignals(false);
       _updatingProperties = false;
       return;
    }
    _pNameLabel->setText(QString::fromStdString(pComponent->name));
    _pKindLabel->setText(QString::fromStdString(KindLabel(pComponent->kind)));
-   NumericProperty property = NumericProperty::ResistanceOhm;
-   QString caption;
-   if (HasPrimaryValue(pComponent->kind, &property, &caption))
+   for (int16_t code = 0; code <= static_cast<int16_t>(NumericProperty::InitialValue); code += 1)
    {
+      const auto property = static_cast<NumericProperty>(code);
       double value = 0.0;
-      _editedProperty = property;
-      _pValueCaption->setText(caption);
-      if (IsOk(ReadNumeric(*pComponent, property, &value)))
+      if (IsErr(ReadNumeric(*pComponent, property, &value)))
       {
-         _pValueEdit->setText(QString::fromStdString(FormatSiNumber(value)));
+         continue;
       }
-      _pValueEdit->setEnabled(true);
+      const int row = _pProperties->rowCount();
+      _pProperties->insertRow(row);
+      QTableWidgetItem* pName = new QTableWidgetItem(PropertyCaption(NumericPropertyKey(property)));
+      pName->setFlags(Qt::ItemIsEnabled);
+      QTableWidgetItem* pValue = new QTableWidgetItem(QString::fromStdString(FormatSiNumber(value)));
+      pValue->setData(PropertyKindRole, NumericKind);
+      pValue->setData(PropertyCodeRole, static_cast<int>(code));
+      _pProperties->setItem(row, 0, pName);
+      _pProperties->setItem(row, 1, pValue);
    }
-   else
+   for (int16_t code = 0; code <= static_cast<int16_t>(EnumProperty::MuxWidth); code += 1)
    {
-      _pValueCaption->setText("Value");
-      _pValueEdit->clear();
-      _pValueEdit->setEnabled(false);
+      const auto property = static_cast<EnumProperty>(code);
+      int32_t selected = 0;
+      if (IsErr(ReadEnumCode(*pComponent, property, &selected)))
+      {
+         continue;
+      }
+      const int row = _pProperties->rowCount();
+      _pProperties->insertRow(row);
+      QTableWidgetItem* pName = new QTableWidgetItem(PropertyCaption(EnumPropertyKey(property)));
+      pName->setFlags(Qt::ItemIsEnabled);
+      QTableWidgetItem* pValue = new QTableWidgetItem();
+      pValue->setFlags(Qt::ItemIsEnabled);
+      _pProperties->setItem(row, 0, pName);
+      _pProperties->setItem(row, 1, pValue);
+      QComboBox* pChoices = new QComboBox(_pProperties);
+      const int32_t choiceCount = EnumCodeCount(property);
+      for (int32_t choice = 0; choice < choiceCount; choice += 1)
+      {
+         pChoices->addItem(QString::fromStdString(EnumCodeLabel(property, choice)));
+      }
+      if (selected >= 0 && selected < choiceCount)
+      {
+         pChoices->setCurrentIndex(selected);
+      }
+      pChoices->setProperty("enumProperty", static_cast<int>(code));
+      _pProperties->setCellWidget(row, 1, pChoices);
+      connect(pChoices, &QComboBox::currentIndexChanged, this, &MainWindow::OnEnumEdited);
    }
+   if (const SwitchEventList* pEvents = EventListOf(*pComponent))
+   {
+      const int row = _pProperties->rowCount();
+      _pProperties->insertRow(row);
+      QTableWidgetItem* pName = new QTableWidgetItem("Events");
+      pName->setFlags(Qt::ItemIsEnabled);
+      QTableWidgetItem* pValue = new QTableWidgetItem(QString::fromStdString(FormatEvents(*pEvents)));
+      pValue->setData(PropertyKindRole, EventKind);
+      _pProperties->setItem(row, 0, pName);
+      _pProperties->setItem(row, 1, pValue);
+   }
+   _pProperties->blockSignals(false);
    _updatingProperties = false;
 }
 
@@ -664,7 +941,7 @@ void MainWindow::OnComponentMoved(qulonglong componentId, int positionX, int pos
       RefreshSheet();
       return;
    }
-   _pPlot->Clear();
+   ClearResults();
    CommitEdit(before, _documentPath);
    RefreshSheet();
    statusBar()->showMessage("Moved " + QString::fromStdString(pComponent->name) + ".");
@@ -684,7 +961,7 @@ void MainWindow::OnRotateRequested(void)
       statusBar()->showMessage(QString::fromStdString(Describe(turned)));
       return;
    }
-   _pPlot->Clear();
+   ClearResults();
    CommitEdit(before, _documentPath);
    RefreshSheet();
    statusBar()->showMessage("Rotated the selected part.");
@@ -741,7 +1018,7 @@ void MainWindow::OnOpenExample(void)
    _placement = Placement::Idle;
    _pSchematic->SetPlacement(Placement::Idle);
    _pResults->clear();
-   _pPlot->Clear();
+   ClearResults();
    CommitEdit(before, pathBefore);
    RefreshSheet();
    ShowSelection();
@@ -763,7 +1040,7 @@ void MainWindow::OnPlaceRequested(int positionX, int positionY)
       statusBar()->showMessage(QString::fromStdString(Describe(added)));
       return;
    }
-   _pPlot->Clear();
+   ClearResults();
    CommitEdit(before, _documentPath);
    RefreshSheet();
    statusBar()->showMessage("Placed " + QString::fromStdString(KindLabel(_armedKind)) + ". Press Escape to stop placing.");
@@ -797,7 +1074,7 @@ void MainWindow::OnDeleteRequested(void)
    const Circuit before = _circuit;
    _circuit.RemoveWiresTouching(selectedId);
    _circuit.RemoveComponent(selectedId);
-   _pPlot->Clear();
+   ClearResults();
    CommitEdit(before, _documentPath);
    RefreshSheet();
    ShowSelection();
@@ -823,9 +1100,9 @@ void MainWindow::OnSelectionChanged(void)
    ShowSelection();
 }
 
-void MainWindow::OnValueEdited(void)
+void MainWindow::OnPropertyEdited(QTableWidgetItem* pItem)
 {
-   if (_updatingProperties || _pValueEdit->isEnabled() == false)
+   if (_updatingProperties || pItem == nullptr || pItem->column() != 1)
    {
       return;
    }
@@ -834,26 +1111,94 @@ void MainWindow::OnValueEdited(void)
    {
       return;
    }
+   const int kind = pItem->data(PropertyKindRole).toInt();
+   if (kind == EventKind)
+   {
+      SwitchEventList* pEvents = EventListOf(pComponent);
+      if (pEvents == nullptr)
+      {
+         return;
+      }
+      const std::string edited = pItem->text().toStdString();
+      if (edited == FormatEvents(*pEvents))
+      {
+         return;
+      }
+      SwitchEventList parsed;
+      if (IsErr(ParseEvents(edited, &parsed)))
+      {
+         statusBar()->showMessage("Enter events as 1m closed, 2m open.");
+         ShowSelection();
+         return;
+      }
+      const Circuit before = _circuit;
+      *pEvents = std::move(parsed);
+      ClearResults();
+      CommitEdit(before, _documentPath);
+      statusBar()->showMessage("Updated " + QString::fromStdString(pComponent->name) + ".");
+      return;
+   }
+   if (kind != NumericKind)
+   {
+      return;
+   }
+   const auto property = static_cast<NumericProperty>(pItem->data(PropertyCodeRole).toInt());
    double value = 0.0;
-   const Result parsed = ParseSiNumber(_pValueEdit->text().toStdString(), &value);
-   if (IsErr(parsed))
+   if (IsErr(ParseSiNumber(pItem->text().toStdString(), &value)))
    {
       statusBar()->showMessage("Enter a number such as 4.7k, 10u, or 1Meg.");
+      ShowSelection();
       return;
    }
    double current = 0.0;
-   if (IsOk(ReadNumeric(*pComponent, _editedProperty, &current)) && current == value)
+   if (IsOk(ReadNumeric(*pComponent, property, &current)) && current == value)
    {
       return;
    }
    const Circuit before = _circuit;
-   const Result written = WriteNumeric(pComponent, _editedProperty, value);
+   const Result written = WriteNumeric(pComponent, property, value);
    if (IsErr(written))
    {
       statusBar()->showMessage(QString::fromStdString(Describe(written)));
+      ShowSelection();
       return;
    }
-   _pPlot->Clear();
+   ClearResults();
+   CommitEdit(before, _documentPath);
+   statusBar()->showMessage("Updated " + QString::fromStdString(pComponent->name) + ".");
+}
+
+void MainWindow::OnEnumEdited(int index)
+{
+   if (_updatingProperties || index < 0)
+   {
+      return;
+   }
+   QComboBox* pChoices = qobject_cast<QComboBox*>(sender());
+   if (pChoices == nullptr)
+   {
+      return;
+   }
+   Component* pComponent = _circuit.FindComponent(_pSchematic->SelectedComponentId());
+   if (pComponent == nullptr)
+   {
+      return;
+   }
+   const auto property = static_cast<EnumProperty>(pChoices->property("enumProperty").toInt());
+   int32_t current = 0;
+   if (IsOk(ReadEnumCode(*pComponent, property, &current)) && current == index)
+   {
+      return;
+   }
+   const Circuit before = _circuit;
+   const Result written = WriteEnumCode(pComponent, property, index);
+   if (IsErr(written))
+   {
+      statusBar()->showMessage(QString::fromStdString(Describe(written)));
+      ShowSelection();
+      return;
+   }
+   ClearResults();
    CommitEdit(before, _documentPath);
    statusBar()->showMessage("Updated " + QString::fromStdString(pComponent->name) + ".");
 }
@@ -869,7 +1214,7 @@ void MainWindow::OnNewCircuit(void)
    _placement = Placement::Idle;
    _pSchematic->SetPlacement(Placement::Idle);
    _pResults->clear();
-   _pPlot->Clear();
+   ClearResults();
    CommitEdit(before, pathBefore);
    RefreshSheet();
    ShowSelection();
@@ -906,7 +1251,7 @@ void MainWindow::OnOpenCircuit(void)
    _placement = Placement::Idle;
    _pSchematic->SetPlacement(Placement::Idle);
    _pResults->clear();
-   _pPlot->Clear();
+   ClearResults();
    CommitEdit(before, pathBefore);
    RefreshSheet();
    ShowSelection();
@@ -950,7 +1295,7 @@ void MainWindow::OnUndo(void)
    _placement = Placement::Idle;
    _pSchematic->SetPlacement(Placement::Idle);
    _pResults->clear();
-   _pPlot->Clear();
+   ClearResults();
    UpdateHistoryActions();
    RefreshSheet();
    ShowSelection();
@@ -970,7 +1315,7 @@ void MainWindow::OnRedo(void)
    _placement = Placement::Idle;
    _pSchematic->SetPlacement(Placement::Idle);
    _pResults->clear();
-   _pPlot->Clear();
+   ClearResults();
    UpdateHistoryActions();
    RefreshSheet();
    ShowSelection();
@@ -1034,7 +1379,7 @@ void MainWindow::OnWireFinish(void)
    _wirePoints.clear();
    _placement = Placement::Idle;
    _pSchematic->SetPlacement(Placement::Idle);
-   _pPlot->Clear();
+   ClearResults();
    CommitEdit(before, _documentPath);
    RefreshSheet();
    statusBar()->showMessage("Wire added.");
@@ -1126,6 +1471,119 @@ void MainWindow::SetAnalysisBusy(AnalysisBusy busy)
    _pCancelAction->setEnabled(running);
 }
 
+void MainWindow::ClearResults(void)
+{
+   _pPlot->Clear();
+   _sheetNotes.clear();
+   _cursorValid = false;
+   _pSchematic->SetNotes(_sheetNotes);
+   _pSchematic->RefreshNotes();
+}
+
+void MainWindow::OnPlotCursor(double position)
+{
+   _cursorPosition = position;
+   _cursorValid = true;
+   statusBar()->showMessage("Cursor " + QString::fromStdString(FormatSiNumber(position)));
+   ApplySheetNotes();
+}
+
+void MainWindow::ApplySheetNotes(void)
+{
+   _sheetNotes.clear();
+   if (_worker.Kind() == AnalysisKind::AcSweep)
+   {
+      const AcResult& result = _worker.Ac();
+      if (IsOk(result.code) && result.points.empty() == false)
+      {
+         const AcPoint* pPoint = &result.points.front();
+         if (_cursorValid)
+         {
+            double bestDistance = std::abs(pPoint->frequencyHz - _cursorPosition);
+            for (const AcPoint& point : result.points)
+            {
+               const double distance = std::abs(point.frequencyHz - _cursorPosition);
+               if (distance < bestDistance)
+               {
+                  bestDistance = distance;
+                  pPoint = &point;
+               }
+            }
+         }
+         for (const NodeValue& node : result.bias.nodes)
+         {
+            if (node.netIndex == 0 || node.netIndex >= pPoint->netVoltageReal.size() || node.netIndex >= pPoint->netVoltageImag.size())
+            {
+               continue;
+            }
+            const double realPart = pPoint->netVoltageReal[node.netIndex];
+            const double imagPart = pPoint->netVoltageImag[node.netIndex];
+            const double magnitude = std::sqrt((realPart * realPart) + (imagPart * imagPart));
+            const double phase = std::atan2(imagPart, realPart) * 180.0 / std::numbers::pi;
+            AddNote(&_sheetNotes, _circuit, node.netIndex, FormatSiNumber(magnitude) + " V  " + FormatSiNumber(phase) + " deg");
+         }
+      }
+   }
+   else if (_worker.Kind() == AnalysisKind::Transient)
+   {
+      const TransientResult& result = _worker.Transient();
+      if (IsOk(result.code) && result.samples.empty() == false)
+      {
+         const TransientSample* pSample = &result.samples.front();
+         if (_cursorValid)
+         {
+            double bestDistance = std::abs(pSample->timeSec - _cursorPosition);
+            for (const TransientSample& sample : result.samples)
+            {
+               const double distance = std::abs(sample.timeSec - _cursorPosition);
+               if (distance < bestDistance)
+               {
+                  bestDistance = distance;
+                  pSample = &sample;
+               }
+            }
+         }
+         for (const NodeValue& node : result.initial.nodes)
+         {
+            if (node.netIndex == 0 || node.netIndex >= pSample->netVoltage.size())
+            {
+               continue;
+            }
+            std::string text = FormatSiNumber(pSample->netVoltage[node.netIndex]) + " V";
+            if (node.netIndex < pSample->netLevel.size() && pSample->netLevel[node.netIndex] != LogicLevel::HighZ)
+            {
+               text += " ";
+               text += LevelText(pSample->netLevel[node.netIndex]).toStdString();
+            }
+            AddNote(&_sheetNotes, _circuit, node.netIndex, text);
+         }
+      }
+   }
+   else
+   {
+      const DcResult& result = _worker.Dc();
+      if (IsOk(result.code))
+      {
+         for (const NodeValue& node : result.nodes)
+         {
+            if (node.netIndex == 0)
+            {
+               continue;
+            }
+            std::string text = FormatSiNumber(node.value) + " V";
+            if (node.level != LogicLevel::HighZ)
+            {
+               text += " ";
+               text += LevelText(node.level).toStdString();
+            }
+            AddNote(&_sheetNotes, _circuit, node.netIndex, text);
+         }
+      }
+   }
+   _pSchematic->SetNotes(_sheetNotes);
+   _pSchematic->RefreshNotes();
+}
+
 void MainWindow::OnAnalysisFinished(void)
 {
    SetAnalysisBusy(AnalysisBusy::No);
@@ -1136,6 +1594,13 @@ void MainWindow::OnAnalysisFinished(void)
       report += QString::number(result.points.size()) + " frequency points\n";
       _pResults->setPlainText(report);
       _pPlot->ShowSeries(PlotKind::Bode, "Bode", BodeSeries(result));
+      if (result.points.empty() == false)
+      {
+         _cursorPosition = result.points.front().frequencyHz;
+         _cursorValid = true;
+         _pPlot->SetCursor(_cursorPosition);
+      }
+      ApplySheetNotes();
       statusBar()->showMessage(QString::fromStdString(result.message));
       return;
    }
@@ -1149,7 +1614,22 @@ void MainWindow::OnAnalysisFinished(void)
       }
       report += QString::number(result.samples.size()) + " samples\n";
       _pResults->setPlainText(report);
-      _pPlot->ShowTime(TimeSeries(result), SpectrumSeries(result));
+      const PlotSeriesList logic = LogicSeries(result);
+      if (logic.empty())
+      {
+         _pPlot->ShowTime(TimeSeries(result), SpectrumSeries(result));
+      }
+      else
+      {
+         _pPlot->ShowTiming(logic, TimeSeries(result));
+      }
+      if (result.samples.empty() == false)
+      {
+         _cursorPosition = result.samples.front().timeSec;
+         _cursorValid = true;
+         _pPlot->SetCursor(_cursorPosition);
+      }
+      ApplySheetNotes();
       statusBar()->showMessage(QString::fromStdString(result.message));
       return;
    }
@@ -1183,6 +1663,7 @@ void MainWindow::OnAnalysisFinished(void)
    }
    _pResults->setPlainText(report);
    _pPlot->ShowDc(result.nodes);
+   ApplySheetNotes();
    statusBar()->showMessage(QString::fromStdString(result.message));
 }
 
@@ -1190,8 +1671,9 @@ void MainWindow::OnAbout(void)
 {
    QMessageBox::about(this, "Electric Circuit Analyzer",
       "Drag a part to move it, and press R to rotate it. Wires on its pins follow.\n"
-      "Analysis runs DC, AC, or transient. AC draws a Bode diagram. A transient draws time and, for an analog waveform, a spectrum.\n"
-      "File, Examples opens the circuits in the examples folder.");
+      "The property table edits every numeric and enumerated field. Switch events use lines such as 1m closed, 2m open.\n"
+      "Analysis runs DC, AC, or transient. Click a diagram to move the cursor. The sheet shows the value at that cursor.\n"
+      "A transient with logic levels draws a timing diagram. File, Examples opens the circuits in the examples folder.");
 }
 
 void MainWindow::keyPressEvent(QKeyEvent* pEvent)

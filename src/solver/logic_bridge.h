@@ -20,8 +20,8 @@ namespace Analyzer
  *
  * A logic input on an analog net reads Vil and Vih. A logic output on an
  * analog net is a voltage behind outputResistanceOhm. Pure digital nets stay
- * out of the matrix. Pull-up and pull-down parts on a mixed net are not yet
- * stamped as resistors.
+ * out of the matrix. A pull-up or pull-down on an analog or mixed net is a
+ * resistor to its supply or to ground.
  *
  * \param[in] netlist Compiled circuit.
  * \param[in] settings Operating-point settings.

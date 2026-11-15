@@ -15,6 +15,7 @@ namespace
 {
 
 constexpr double MaximumExponent = 140.0;
+constexpr double MaximumJunctionConductance = 1.0e9;
 constexpr double SmoothWindowVolt = 0.001;
 constexpr double ForwardCapacitanceFraction = 0.5;
 
@@ -84,9 +85,18 @@ DiodeLinearization EvaluateDiode(const DiodeProperties& properties, double junct
       return linearization;
    }
    double argument = junctionVoltageVolt / thermal;
+   double criticalArgument = std::log(thermal / (std::sqrt(2.0) * saturation));
+   if (argument > criticalArgument)
+   {
+      argument = criticalArgument;
+   }
    double exponential = SafeExp(argument);
    linearization.currentAmpere = saturation * (exponential - 1.0);
    linearization.conductanceSiemens = saturation * exponential / thermal;
+   if (linearization.conductanceSiemens > MaximumJunctionConductance)
+   {
+      linearization.conductanceSiemens = MaximumJunctionConductance;
+   }
    return linearization;
 }
 
